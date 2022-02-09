@@ -60,7 +60,7 @@ Feb 09 10:06:34 k8s-master dockerd[6616]: time="2022-02-09T10:06:34.205025511Z" 
 - step1. 设置根目录文件系统为可读写
 
 ```
-root@k8s-master:/home/soap# sudo mount -n -o remount,rw
+root@k8s-master:/home/soap# sudo mount -n -o remount,rw /
 ```
 
 - step2. 注释掉`/etc/fstab`中有swap信息的那行
