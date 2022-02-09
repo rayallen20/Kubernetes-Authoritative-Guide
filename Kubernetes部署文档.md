@@ -125,7 +125,7 @@ apt-transport-https is already the newest version (2.0.6).
 - step2. 获取密钥
 
 ```
-root@k8s-master:/home/soap# sudo curl https://mirrors.aliyun.com/kubernetes/apt/doc/apt-key.gpg | apt-key add - 
+root@k8s-master:/home/soap# curl https://mirrors.aliyun.com/kubernetes/apt/doc/apt-key.gpg | apt-key add - 
   % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
                                  Dload  Upload   Total   Spent    Left  Speed
 100  2537  100  2537    0     0   5637      0 --:--:-- --:--:-- --:--:--  5637
@@ -135,7 +135,7 @@ OK
 - step3. 修改Kubernetes源
 
 ```
-root@k8s-master:/home/soap# sudo cat <<EOF >/etc/apt/sources.list.d/kubernetes.list
+root@k8s-master:/home/soap# cat <<EOF >/etc/apt/sources.list.d/kubernetes.list
 > deb https://mirrors.aliyun.com/kubernetes/apt/ kubernetes-xenial main
 > EOF
 ```
