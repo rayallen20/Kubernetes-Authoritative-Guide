@@ -23,6 +23,34 @@ root@k8s-master:/home/soap# cat /etc/docker/daemon.json
 }
 ```
 
+- step4. 重启docker
+
+```
+root@k8s-master:/home/soap# systemctl restart docker
+root@k8s-master:/home/soap# systemctl status docker
+● docker.service - Docker Application Container Engine
+     Loaded: loaded (/lib/systemd/system/docker.service; enabled; vendor preset: enabled)
+     Active: active (running) since Wed 2022-02-09 10:06:34 UTC; 4h 33min ago
+TriggeredBy: ● docker.socket
+       Docs: https://docs.docker.com
+   Main PID: 6616 (dockerd)
+      Tasks: 15
+     Memory: 43.0M
+     CGroup: /system.slice/docker.service
+             └─6616 /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+
+Feb 09 10:06:34 k8s-master dockerd[6616]: time="2022-02-09T10:06:34.055228315Z" level=warning msg="Your kernel does not support CPU realtime scheduler"
+Feb 09 10:06:34 k8s-master dockerd[6616]: time="2022-02-09T10:06:34.055325447Z" level=warning msg="Your kernel does not support cgroup blkio weight"
+Feb 09 10:06:34 k8s-master dockerd[6616]: time="2022-02-09T10:06:34.055416770Z" level=warning msg="Your kernel does not support cgroup blkio weight_device"
+Feb 09 10:06:34 k8s-master dockerd[6616]: time="2022-02-09T10:06:34.055655669Z" level=info msg="Loading containers: start."
+Feb 09 10:06:34 k8s-master dockerd[6616]: time="2022-02-09T10:06:34.132966016Z" level=info msg="Default bridge (docker0) is assigned with an IP address 172.17.0.0/16. Daemon option --bip can be used to set a preferred IP address"
+Feb 09 10:06:34 k8s-master dockerd[6616]: time="2022-02-09T10:06:34.165836370Z" level=info msg="Loading containers: done."
+Feb 09 10:06:34 k8s-master dockerd[6616]: time="2022-02-09T10:06:34.188900324Z" level=info msg="Docker daemon" commit=459d0df graphdriver(s)=overlay2 version=20.10.12
+Feb 09 10:06:34 k8s-master dockerd[6616]: time="2022-02-09T10:06:34.189145989Z" level=info msg="Daemon has completed initialization"
+Feb 09 10:06:34 k8s-master systemd[1]: Started Docker Application Container Engine.
+Feb 09 10:06:34 k8s-master dockerd[6616]: time="2022-02-09T10:06:34.205025511Z" level=info msg="API listen on /run/docker.sock"
+```
+
 这一步不做的话,kubelet启动会失败,错误码为1
 
 ### 3.1.2 禁用swap交换分区
