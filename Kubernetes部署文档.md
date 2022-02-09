@@ -332,7 +332,6 @@ kubeadm join 192.168.0.154:6443 --token 0pzfmn.gviozccniu2hp1dj \
 	--discovery-token-ca-cert-hash sha256:66882cc6f755d8597bcc6db4de3537ab5b88094c4cfc3950983974737abca05d 
 ```
 
-
 - `--apiserver-advertise-address`:Master的IP地址.该选项指明用Master的那个interface与Cluster的其他节点通信.若Master有多个interface,建议明确指定,若不指定,kubeadm会自动选择有默认网关的interface
 
 
@@ -345,6 +344,361 @@ kubeadm join 192.168.0.154:6443 --token 0pzfmn.gviozccniu2hp1dj \
 - `--ignore-preflight-errors`:忽略preflight级报错信息.此处由于之前有过初始化失败的情况,故需加此选项
 
 - `--v=5`:查看详细初始化过程可使用该选项
+
+此命令主要做的操作有:
+
+- 1. kubeadm执行初始化前的检查
+- 2. 生成token和证书
+- 3. 生成KubeConfig文件(默认为`/var/lib/kubelet/config.yaml`),kubelet需要用这个文件与Master通信
+- 4. 安装Master组件
+- 5. 安装附加组件kube-proxy和kube-dns
+- 6. Kubernetes Master初始化成功
+- 7. 提示如何配置kubectl
+- 8. 提示如何安装Pod网络
+- 9. 提示如何注册其他节点到Cluster
+
+### 3.3.2 配置kubectl
+
+kubectl是管理Kubernetes Cluster的命令行工具,前面我们已经在所有节点安装了kubectl.Master初始化完成后需要做一些配置工作,然后kubectl就能使用了
+
+按照`kubeadm init`输出的第7步信息提示,推荐使用Linux普通用户执行kubectl(root用户会有一些问题)
+
+```
+su - soap
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+```
+
+- step1. 切换用户
+
+```
+root@k8s-master:/home/soap# su - soap
+soap@k8s-master:~$ who
+soap     pts/0        2022-02-09 09:56 (192.168.0.101)
+```
+
+- step2. 创建用于保存配置文件的目录
+
+```
+soap@k8s-master:~$ mkdir -p $HOME/.kube
+soap@k8s-master:~$ ls -a $HOME
+.  ..  .bash_history  .bash_logout  .bashrc  .cache  .kube  .profile  .sudo_as_admin_successful
+```
+
+- step3. 复制配置文件到该目录
+
+```
+soap@k8s-master:~$ sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+soap@k8s-master:~$ tree $HOME/.kube
+/home/soap/.kube
+└── config
+
+0 directories, 1 file
+```
+
+- step4. 修改配置文件的属组属主为普通用户
+
+```
+soap@k8s-master:~$ sudo chown $(id -u):$(id -g) $HOME/.kube/config
+soap@k8s-master:~$ ll $HOME/.kube/config
+-rw------- 1 soap soap 5637 Feb  9 15:22 /home/soap/.kube/config
+```
+
+- step5. 启用kubectl命令的自动补全功能
+
+```
+soap@k8s-master:~$ echo "source <(kubectl completion bash)" >> ~/.bashrc
+```
+
+### 3.3.3 安装Pod网络
+
+要让Kubernetes Cluster能够工作,必须先安装Pod网络,否则Pod之间无法通信.
+
+Kubernetes支持多种网络方案,此处先使用flannel.
+
+可以翻墙的情况下直接执行如下命令即可:
+
+```
+soap@k8s-master:~$ kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+Warning: policy/v1beta1 PodSecurityPolicy is deprecated in v1.21+, unavailable in v1.25+
+podsecuritypolicy.policy/psp.flannel.unprivileged created
+clusterrole.rbac.authorization.k8s.io/flannel created
+clusterrolebinding.rbac.authorization.k8s.io/flannel created
+serviceaccount/flannel created
+configmap/kube-flannel-cfg created
+daemonset.apps/kube-flannel-ds created
+```
+
+### 3.3.4 添加k8s-node1和k8s-node2
+
+在k8s-node1和k8s-node2上分别执行如下命令,将其注册到Cluster中:
+
+- 在k8s-node1上执行
+
+```
+root@k8s-node1:/home/allen# kubeadm join 192.168.0.154:6443 --token 0pzfmn.gviozccniu2hp1dj \
+> --discovery-token-ca-cert-hash sha256:66882cc6f755d8597bcc6db4de3537ab5b88094c4cfc3950983974737abca05d
+[preflight] Running pre-flight checks
+[preflight] Reading configuration from the cluster...
+[preflight] FYI: You can look at this config file with 'kubectl -n kube-system get cm kubeadm-config -o yaml'
+W0209 15:53:07.200031   12934 utils.go:69] The recommended value for "resolvConf" in "KubeletConfiguration" is: /run/systemd/resolve/resolv.conf; the provided value is: /run/systemd/resolve/resolv.conf
+[kubelet-start] Writing kubelet configuration to file "/var/lib/kubelet/config.yaml"
+[kubelet-start] Writing kubelet environment file with flags to file "/var/lib/kubelet/kubeadm-flags.env"
+[kubelet-start] Starting the kubelet
+[kubelet-start] Waiting for the kubelet to perform the TLS Bootstrap...
+
+This node has joined the cluster:
+* Certificate signing request was sent to apiserver and a response was received.
+* The Kubelet was informed of the new secure connection details.
+
+Run 'kubectl get nodes' on the control-plane to see this node join the cluster.
+```
+
+- 在k8s-node2上执行
+
+```
+root@k8s-node2:/home/nikolai# kubeadm join 192.168.0.154:6443 --token 0pzfmn.gviozccniu2hp1dj \
+> --discovery-token-ca-cert-hash sha256:66882cc6f755d8597bcc6db4de3537ab5b88094c4cfc3950983974737abca05d
+[preflight] Running pre-flight checks
+[preflight] Reading configuration from the cluster...
+[preflight] FYI: You can look at this config file with 'kubectl -n kube-system get cm kubeadm-config -o yaml'
+W0209 15:54:01.105342   10064 utils.go:69] The recommended value for "resolvConf" in "KubeletConfiguration" is: /run/systemd/resolve/resolv.conf; the provided value is: /run/systemd/resolve/resolv.conf
+[kubelet-start] Writing kubelet configuration to file "/var/lib/kubelet/config.yaml"
+[kubelet-start] Writing kubelet environment file with flags to file "/var/lib/kubelet/kubeadm-flags.env"
+[kubelet-start] Starting the kubelet
+[kubelet-start] Waiting for the kubelet to perform the TLS Bootstrap...
+
+This node has joined the cluster:
+* Certificate signing request was sent to apiserver and a response was received.
+* The Kubelet was informed of the new secure connection details.
+
+Run 'kubectl get nodes' on the control-plane to see this node join the cluster.
+```
+
+- 添加完成后,在k8s-master上查看结果
+
+```
+soap@k8s-master:~$ kubectl get nodes
+NAME         STATUS     ROLES                  AGE     VERSION
+k8s-master   NotReady   control-plane,master   5h48m   v1.23.3
+k8s-node1    NotReady   <none>                 2m11s   v1.23.3
+k8s-node2    NotReady   <none>                 78s     v1.23.3
+```
+
+可以看到所有节点此时都是NotReady状态.这是因为每个节点都需要启动若干组件,这些组件都是在Pod中运行,需要首先从Google下载镜像.
+
+- 查看Pod状态
+
+```
+soap@k8s-master:~$ kubectl get pod --all-namespaces
+NAMESPACE     NAME                                 READY   STATUS                  RESTARTS   AGE
+kube-system   coredns-55dffbd598-8rcfq             0/1     Pending                 0          5h51m
+kube-system   coredns-55dffbd598-w4c4z             0/1     Pending                 0          5h51m
+kube-system   etcd-k8s-master                      1/1     Running                 0          5h52m
+kube-system   kube-apiserver-k8s-master            1/1     Running                 0          5h52m
+kube-system   kube-controller-manager-k8s-master   1/1     Running                 0          5h52m
+kube-system   kube-flannel-ds-7w96q                0/1     Init:ImagePullBackOff   0          10m
+kube-system   kube-flannel-ds-dxwnk                0/1     Init:1/2                0          5m2s
+kube-system   kube-flannel-ds-tx967                0/1     Init:1/2                0          5m56s
+kube-system   kube-proxy-5wvtm                     1/1     Running                 0          5m56s
+kube-system   kube-proxy-n52bm                     1/1     Running                 0          5m2s
+kube-system   kube-proxy-qzxsp                     1/1     Running                 0          5h51m
+kube-system   kube-scheduler-k8s-master            1/1     Running                 0          5h52m
+```
+
+ImagePullBackOff表明Pod没有就绪.Running才是就绪状态.
+
+- 查看Pod具体情况
+
+```
+soap@k8s-master:~$ kubectl describe pod kube-flannel-ds-tx967 --namespace=kube-system
+Name:                 kube-flannel-ds-tx967
+Namespace:            kube-system
+Priority:             2000001000
+Priority Class Name:  system-node-critical
+Node:                 k8s-node1/192.168.0.155
+Start Time:           Wed, 09 Feb 2022 15:53:09 +0000
+Labels:               app=flannel
+                      controller-revision-hash=cd4db5bc6
+                      pod-template-generation=1
+                      tier=node
+Annotations:          <none>
+Status:               Pending
+IP:                   192.168.0.155
+IPs:
+  IP:           192.168.0.155
+Controlled By:  DaemonSet/kube-flannel-ds
+Init Containers:
+  install-cni-plugin:
+    Container ID:  docker://518725687ef5f69dcf26bfc59bde4fd2848960f201cd2830942ed2591b0f16e0
+    Image:         rancher/mirrored-flannelcni-flannel-cni-plugin:v1.0.1
+    Image ID:      docker-pullable://rancher/mirrored-flannelcni-flannel-cni-plugin@sha256:5dd61f95e28fa7ef897ff2fa402ce283e5078d334401d2f62d00a568f779f2d5
+    Port:          <none>
+    Host Port:     <none>
+    Command:
+      cp
+    Args:
+      -f
+      /flannel
+      /opt/cni/bin/flannel
+    State:          Terminated
+      Reason:       Completed
+      Exit Code:    0
+      Started:      Wed, 09 Feb 2022 15:58:29 +0000
+      Finished:     Wed, 09 Feb 2022 15:58:29 +0000
+    Ready:          True
+    Restart Count:  0
+    Environment:    <none>
+    Mounts:
+      /opt/cni/bin from cni-plugin (rw)
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-sv89r (ro)
+  install-cni:
+    Container ID:  
+    Image:         rancher/mirrored-flannelcni-flannel:v0.16.3
+    Image ID:      
+    Port:          <none>
+    Host Port:     <none>
+    Command:
+      cp
+    Args:
+      -f
+      /etc/kube-flannel/cni-conf.json
+      /etc/cni/net.d/10-flannel.conflist
+    State:          Waiting
+      Reason:       PodInitializing
+    Ready:          False
+    Restart Count:  0
+    Environment:    <none>
+    Mounts:
+      /etc/cni/net.d from cni (rw)
+      /etc/kube-flannel/ from flannel-cfg (rw)
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-sv89r (ro)
+Containers:
+  kube-flannel:
+    Container ID:  
+    Image:         rancher/mirrored-flannelcni-flannel:v0.16.3
+    Image ID:      
+    Port:          <none>
+    Host Port:     <none>
+    Command:
+      /opt/bin/flanneld
+    Args:
+      --ip-masq
+      --kube-subnet-mgr
+    State:          Waiting
+      Reason:       PodInitializing
+    Ready:          False
+    Restart Count:  0
+    Limits:
+      cpu:     100m
+      memory:  50Mi
+    Requests:
+      cpu:     100m
+      memory:  50Mi
+    Environment:
+      POD_NAME:       kube-flannel-ds-tx967 (v1:metadata.name)
+      POD_NAMESPACE:  kube-system (v1:metadata.namespace)
+    Mounts:
+      /etc/kube-flannel/ from flannel-cfg (rw)
+      /run/flannel from run (rw)
+      /run/xtables.lock from xtables-lock (rw)
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-sv89r (ro)
+Conditions:
+  Type              Status
+  Initialized       False 
+  Ready             False 
+  ContainersReady   False 
+  PodScheduled      True 
+Volumes:
+  run:
+    Type:          HostPath (bare host directory volume)
+    Path:          /run/flannel
+    HostPathType:  
+  cni-plugin:
+    Type:          HostPath (bare host directory volume)
+    Path:          /opt/cni/bin
+    HostPathType:  
+  cni:
+    Type:          HostPath (bare host directory volume)
+    Path:          /etc/cni/net.d
+    HostPathType:  
+  flannel-cfg:
+    Type:      ConfigMap (a volume populated by a ConfigMap)
+    Name:      kube-flannel-cfg
+    Optional:  false
+  xtables-lock:
+    Type:          HostPath (bare host directory volume)
+    Path:          /run/xtables.lock
+    HostPathType:  FileOrCreate
+  kube-api-access-sv89r:
+    Type:                    Projected (a volume that contains injected data from multiple sources)
+    TokenExpirationSeconds:  3607
+    ConfigMapName:           kube-root-ca.crt
+    ConfigMapOptional:       <nil>
+    DownwardAPI:             true
+QoS Class:                   Burstable
+Node-Selectors:              <none>
+Tolerations:                 :NoSchedule op=Exists
+                             node.kubernetes.io/disk-pressure:NoSchedule op=Exists
+                             node.kubernetes.io/memory-pressure:NoSchedule op=Exists
+                             node.kubernetes.io/network-unavailable:NoSchedule op=Exists
+                             node.kubernetes.io/not-ready:NoExecute op=Exists
+                             node.kubernetes.io/pid-pressure:NoSchedule op=Exists
+                             node.kubernetes.io/unreachable:NoExecute op=Exists
+                             node.kubernetes.io/unschedulable:NoSchedule op=Exists
+Events:
+  Type     Reason     Age                   From               Message
+  ----     ------     ----                  ----               -------
+  Normal   Scheduled  7m46s                 default-scheduler  Successfully assigned kube-system/kube-flannel-ds-tx967 to k8s-node1
+  Warning  Failed     4m21s                 kubelet            Failed to pull image "rancher/mirrored-flannelcni-flannel-cni-plugin:v1.0.1": rpc error: code = Unknown desc = context canceled
+  Warning  Failed     4m21s                 kubelet            Error: ErrImagePull
+  Normal   BackOff    4m20s                 kubelet            Back-off pulling image "rancher/mirrored-flannelcni-flannel-cni-plugin:v1.0.1"
+  Warning  Failed     4m20s                 kubelet            Error: ImagePullBackOff
+  Normal   Pulling    4m6s (x2 over 7m41s)  kubelet            Pulling image "rancher/mirrored-flannelcni-flannel-cni-plugin:v1.0.1"
+  Normal   Pulled     2m25s                 kubelet            Successfully pulled image "rancher/mirrored-flannelcni-flannel-cni-plugin:v1.0.1" in 1m40.880912888s
+  Normal   Created    2m25s                 kubelet            Created container install-cni-plugin
+  Normal   Started    2m25s                 kubelet            Started container install-cni-plugin
+  Normal   Pulling    2m25s                 kubelet            Pulling image "rancher/mirrored-flannelcni-flannel:v0.16.3"
+```
+
+可以看到,此时该Pod正在拉取镜像,但是失败了.在对应的节点上手动拉取镜像即可
+
+```
+root@k8s-node2:/home/nikolai# docker pull rancher/mirrored-flannelcni-flannel:v0.16.3
+v0.16.3: Pulling from rancher/mirrored-flannelcni-flannel
+5758d4e389a3: Already exists 
+2550df1e0230: Already exists 
+d05af167a36f: Already exists 
+4d1ce2758b2c: Pull complete 
+7ed6eda0612a: Pull complete 
+980bc40a6f66: Pull complete 
+54c6f5f413fd: Pull complete 
+Digest: sha256:645f782e024986db3a3ce255d7cb004f851b03a7b0abecb145a8ce96659b05c5
+Status: Downloaded newer image for rancher/mirrored-flannelcni-flannel:v0.16.3
+docker.io/rancher/mirrored-flannelcni-flannel:v0.16.3
+```
+
+- 拉取完毕后,从k8s-master上查看结果
+
+```
+soap@k8s-master:~$ kubectl get pod --all-namespaces
+NAMESPACE     NAME                                 READY   STATUS    RESTARTS   AGE
+kube-system   coredns-55dffbd598-8rcfq             1/1     Running   0          6h48m
+kube-system   coredns-55dffbd598-w4c4z             1/1     Running   0          6h48m
+kube-system   etcd-k8s-master                      1/1     Running   0          6h49m
+kube-system   kube-apiserver-k8s-master            1/1     Running   0          6h49m
+kube-system   kube-controller-manager-k8s-master   1/1     Running   0          6h49m
+kube-system   kube-flannel-ds-7w96q                1/1     Running   0          66m
+kube-system   kube-flannel-ds-dxwnk                1/1     Running   0          61m
+kube-system   kube-flannel-ds-tx967                1/1     Running   0          62m
+kube-system   kube-proxy-5wvtm                     1/1     Running   0          62m
+kube-system   kube-proxy-n52bm                     1/1     Running   0          61m
+kube-system   kube-proxy-qzxsp                     1/1     Running   0          6h48m
+kube-system   kube-scheduler-k8s-master            1/1     Running   0          6h49m
+```
+
+可以看到,所有节点现在均处于Running状态
 
 ## 附:查看kubelet的日志以确定报错信息的方式
 
@@ -393,26 +747,3 @@ Feb 09 10:04:35 k8s-master systemd[1]: Started kubelet: The Kubernetes Node Agen
 -- 
 -- The job identifier is 4472.
 ```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
