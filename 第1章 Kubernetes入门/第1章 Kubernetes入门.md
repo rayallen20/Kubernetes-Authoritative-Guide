@@ -79,37 +79,264 @@ Service的服务进程通常基于Socket通信方式对外提供服务,比如Red
 
 	对于互联网公司来说,用户规模等价于资产,因此横向扩容能力是衡量互联网业务系统竞争力的关键指标.我们利用Kubernetes提供的工具,不用修改代码,就能将一个Kubernetes集群从只包含几个Node的小集群平滑扩展到拥有上百个Node的大集群,甚至可以在线完成集群扩容.只要微服务架构设计得合理,能够在多个云环境中进行弹性伸缩,系统就能够承受大量用户并发访问带来的巨大压力
 	
+## 1.3 从一个简单的例子开始
 
+考虑到Kubernetes提供的`PHP` + `Redis`留言板的Hello World例子对于绝大多数新手来说比较复杂,难以顺利上手和实践,在此将其替换成一个简单得多的Java Web应用的例子,可以让新手快速上手和实践.
 
+该应用是一个运行在Tomcat里的Web App,结构比较简单，如下图示.
 
+![JavaWebApp](./img/JavaWebApp.png)
 
+JSP页面通过JDBC直接访问MySQL数据库并展示数据.这里出于演示和简化的目的,只要程序正确连接数据库,就会自动完成对应的Table创建与初始化数据的准备工作.所以,当我们通过浏览器访问此应用时,就会显示一个表格页面,其中包含来自数据库的内容.
 
+此应用需要启动两个容器:Web App容器和MySQL容器,并且Web App容器需要访问MySQL容器.如果仅使用Docker启动这两个容器,则需要通过Docker Network或者端口映射的方式实现容器间的网络互访.本例介绍在Kubernetes系统中是如何实现的.
 
+### 1.3.1 环境准备
 
+[部署Kubernetes Cluster](https://github.com/rayallen20/Kubernetes-Authoritative-Guide/blob/main/Kubernetes%E9%83%A8%E7%BD%B2%E6%96%87%E6%A1%A3.md)
 
+### 1.3.2 启动MySQL服务
 
+- step1. 创建Deployment定义文件
 
+在master节点上创建一个Deployment定义文件`mysql-deploy.yaml`:
 
+```
+soap@k8s-master:~$ vim mysql-deploy.yaml 
+soap@k8s-master:~$ cat mysql-deploy.yaml
+# API版本
+apiVersion: apps/v1
+# 副本控制器Deployment
+kind: Deployment
+metadata:
+  # 标签
+  labels:
+    app: mysql
+  # 对象名称 全局唯一
+  name: mysql
+spec:
+  # 预期的副本数量
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  # Pod模板
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      # 定义容器
+      containers:
+        - image: mysql:5.7
+          name: mysql
+          ports:
+          # 容器应用监听的端口号
+          - containerPort: 3306
+          # 注入容器内的环境变量
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              value: "123456"
+```
 
+该YAML定义文件中:
 
+- `kind`:该属性值表示此资源对象的类型,本例中该值表示这是一个Deployment
+- `spec`:是Deployment的相关属性定义
+	- `spec.selector`:Deployment的Pod选择器,符合该选择器条件的Pod实例将受到该Deployment的管理
+	- `spec.replicas`:指定在当前Kubernetes Cluster中处于运行状态的Pod实例数量(此处设置`replicas=1`,表示只能运行1个MySQL Pod实例).
+	- `spec.template`:当Kubernetes Cluster中运行的Pod数量少于`spec.replicas`指定的数量时,Deployment控制器会根据该部分定义的Pod模板生成新的Pod实例
+		- `spec.template.metadata.labels`:指定该Pod的标签,该值必须匹配`spec.selector`
 
+- step2. 将Deployment发布到Kubernetes Cluster中
 
+创建好`mysql-deploy.yaml`文件后,为了将它发布到Kubernetes集群中,在Master上运行`kubectl apply -f mysql-deploy.yaml`:
 
+```
+soap@k8s-master:~$ kubectl apply -f mysql-deploy.yaml
+deployment.apps/mysql created
+```
 
+- step3. 查看发布情况
 
+查看创建的Deployment:
 
+```
+soap@k8s-master:~$ kubectl get deploy
+NAME    READY   UP-TO-DATE   AVAILABLE   AGE
+mysql   1/1     1            1           2m1s
+```
 
+查看Pod的创建情况:
 
+```
+soap@k8s-master:~$ kubectl get pods
+NAME                     READY   STATUS    RESTARTS   AGE
+mysql-596b96985c-7w9kv   1/1     Running   0          16m
+```
 
+可以看到一个名为`mysql-596b96985c-7w9kv`的实例,这是Kubernetes根据mysql这个Deployment的定义自动创建的Pod.由于Pod的调度和创建需要花费一定的时间,比如需要确认调度到哪个节点上,且下载Pod所需的容器镜像也需时间,因此一开始Pod一开始Pod的状态为Pending.可通过`kubectl logs POD_NAME`(本例中即为`kubectl logs mysql-596b96985c-7w9kv`)查看Pod的日志来确认创建Pod过程中是否存在错误.在Pod成功创建启动完成后,其状态最终会更新为Running.
 
+可以在Kubernetes Cluster中的节点上通过`docker ps`查看正在运行的容器.发现提供MySQL服务的Pod容器已经创建并且正常运行(此处我的实验环境中除了Master节点外只有2个节点,所以我是挨个节点上执行的`docker ps`找到的),且MySQL Pod对应的容器多创建了一个Pause容器,该容器就是Pod的根容器.
 
+```
+[sudo] password for nikolai: 
+CONTAINER ID   IMAGE                                                COMMAND                  CREATED          STATUS          PORTS     NAMES
+7d83658d3440   mysql                                                "docker-entrypoint.s…"   20 minutes ago   Up 20 minutes             k8s_mysql_mysql-596b96985c-7w9kv_default_22c70018-03e1-445e-bc8c-9a73543e4b87_0
+0d912aa46487   registry.aliyuncs.com/google_containers/pause:3.6    "/pause"                 21 minutes ago   Up 21 minutes             k8s_POD_mysql-596b96985c-7w9kv_default_22c70018-03e1-445e-bc8c-9a73543e4b87_0
+...
+2b0e4a897afe   registry.aliyuncs.com/google_containers/kube-proxy   "/usr/local/bin/kube…"   16 hours ago     Up 16 hours               k8s_kube-proxy_kube-proxy-n52bm_kube-system_0cf9ba55-698e-40bf-be16-8754155cf84a_0
+```
 
+注:此处为了看着明显,删掉了一些无关的容器信息.
 
+- step4. 创建与该Deployment关联的Service定义文件
 
+最后,创建一个与该Deployment关联的Kubernetes Service:MySQL的定义文件(文件名为`mysql-svc.yaml`),完整的内容和说明如下:
 
+```
+soap@k8s-master:~$ vim mysql-svc.yaml
+soap@k8s-master:~$ cat mysql-svc.yaml 
+apiVersion: v1
+# 声明是Kubernetes Service
+kind: Service
+metadata:
+  # Service的全局唯一名称
+  name: mysql
+spec:
+  ports:
+    # Service提供服务的端口号
+    - port: 3306
+  # Service对应的Pod拥有此处定义的标签
+  selector:
+    app: mysql
+```
 
+- `matadata.name`:Service的服务名(ServiceName)
+- `spec.ports`:定义Service的虚端口
+- `spec.selector`:选择器指定的Pod副本(实例)将对应本服务
 
+- step5. 通过`kubectl create`命令创建Service对象
 
+```
+soap@k8s-master:~$ kubectl create -f mysql-svc.yaml
+service/mysql created
+```
+
+- step6. 查看刚刚创建的Service对象
+
+```
+soap@k8s-master:~$ kubectl get svc mysql
+NAME    TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)    AGE
+mysql   ClusterIP   10.107.16.60   <none>        3306/TCP   20s
+```
+
+可以发现,MySQL服务被分配的ClusterIP地址为`10.107.16.60`.之后,Kubernetes Cluster中新创建的其他Pod就可以通过该Service的ClusterIP + 端口号(3306)来连接和访问该Service了.
+
+通常ClusterIP是在Service创建后,由Kubernetes系统自动分配的,其他Pod无法预先知道某个Service的ClusterIP地址,因此需要一个服务发现机制来找到这个服务.Kubernetes最初使用Linux环境变量(Environment Variable)来解决这个问题.根据Service的唯一名称,容器可以从环境变量中获取Service对应的ClusterIP地址和端口号,从而发起TCP/IP连接请求.
+
+### 1.3.3 启动Tomcat应用
+
+- step1. 创建Deployment定义文件
+
+前面定义和启动了MySQL服务,接下来采用同样的步骤完成Tomcat应用的启动.首先,创建对应的RC文件`myweb-deploy.yaml`,内容如下:
+
+```
+soap@k8s-master:~$ vim myweb-deploy.yaml
+soap@k8s-master:~$ cat myweb-deploy.yaml 
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: myweb
+  name: myweb
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: myweb
+  template:
+    metadata:
+      labels:
+        app: myweb
+    spec:
+      containers:
+      - image: kubeguide/tomcat-app:v1
+        name: web
+        ports:
+        - containerPort: 8080
+        env:
+        - name: MYSQL_SERVICE_HOST
+          value: 10.107.16.60
+```
+
+注意:在Tomcat容器内,应用使用了环境变量`MYSQL_SERVICE_HOST`的值来连接MySQL服务,但是此处却并没有定义该环境变量.由于Kubernetes会自动将已存在的Service对象以环境变量的形式展现在新生成的Pod中,所以此处可以使用.更安全、可靠的方法是使用服务名称mysql,但这种方式要求Cluster内的DNS服务(`kube-dns`)正常运行.
+
+- step2. 创建Deployment
+
+```
+soap@k8s-master:~$ kubectl apply -f myweb-deploy.yaml
+deployment.apps/myweb created
+```
+
+- step3. 验证Deployment创建结果
+
+```
+soap@k8s-master:~$ kubectl get pods
+NAME                     READY   STATUS    RESTARTS   AGE
+mysql-596b96985c-7w9kv   1/1     Running   0          74m
+myweb-6d5d5fccbc-pjxhc   1/1     Running   0          2m38s
+myweb-6d5d5fccbc-s44f2   1/1     Running   0          2m38s
+```
+
+- step4. 创建与该Deployment关联的Service定义文件(`myweb-svc.yaml`)
+
+```
+soap@k8s-master:~$ vim myweb-svc.yaml
+soap@k8s-master:~$ cat myweb-svc.yaml 
+apiVersion: v1
+kind: Service
+metadata:
+  name: myweb
+spec:
+  type: NodePort
+  ports:
+    - port: 8080
+      nodePort: 30001
+  selector:
+    app: myweb
+```
+
+- `type.NodePort`:表示此Service开启NodePort格式的外网访问模式
+- `port`:表示此Service的虚端口
+- `nodePort`:表示此Service的外网访问端口
+
+- step5. 创建Service
+
+```
+soap@k8s-master:~$ kubectl create -f myweb-svc.yaml
+service/myweb created
+```
+
+- setp6. 查看创建结果
+
+```
+soap@k8s-master:~$ kubectl get svc
+NAME         TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)          AGE
+kubernetes   ClusterIP   10.96.0.1       <none>        443/TCP          22h
+mysql        ClusterIP   10.107.16.60    <none>        3306/TCP         44m
+myweb        NodePort    10.99.161.194   <none>        8080:30001/TCP   20s
+```
+
+### 1.3.4 通过浏览器访问网页
+
+![访问结果1](./img/访问结果1.png)
+
+![访问结果2](./img/访问结果2.png)
+
+注:此处由于部署了2个myweb的Pod副本,所以在2个节点上都能访问到.
+
+至此,就完成了在Kubernetes上部署一个Web App和数据库的 例子.可以看到,相对于传统的分布式应用部署方式,在Kubernetes之上仅通过一些很容易理解的配置文件和简单命令就能完成对整个集群的部署.
 
 
 
