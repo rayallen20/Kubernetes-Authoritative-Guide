@@ -624,7 +624,7 @@ Volumes:
     Path:          /etc/cni/net.d
     HostPathType:  
   flannel-cfg:
-    Type:      ConfigMap (a volume populated by a ConfigMap)
+    Type:      ConfigMarap (a volume populated by a ConfigMap)
     Name:      kube-flannel-cfg
     Optional:  false
   xtables-lock:
@@ -700,7 +700,7 @@ kube-system   kube-scheduler-k8s-master            1/1     Running   0          
 
 可以看到,所有节点现在均处于Running状态
 
-## 附:查看kubelet的日志以确定报错信息的方式
+## 附1:查看kubelet的日志以确定报错信息的方式
 
 查看报错信息:`journalctl -xeu kubelet`
 
@@ -746,4 +746,49 @@ Feb 09 10:04:35 k8s-master systemd[1]: Started kubelet: The Kubernetes Node Agen
 -- A start job for unit kubelet.service has finished successfully.
 -- 
 -- The job identifier is 4472.
+```
+
+## 附2:集群中非Master节点连接8080端口被拒绝问题解决方法
+
+- step1. 创建普通用户的kubelet配置目录
+
+```
+allen@k8s-node1:/etc/kubernetes$ mkdir $HOME/.kube
+```
+
+- step2. 复制配置文件到配置目录
+
+```
+allen@k8s-node1:/etc/kubernetes$ sudo cp -i /etc/kubernetes/kubelet.conf $HOME/.kube/config
+```
+
+- step3. 修改文件的属主属组信息
+
+```
+allen@k8s-node1:/etc/kubernetes$ sudo chown $(id -u):$(id -g) $HOME/.kube/config
+```
+
+- step4. 修改pem文件权限
+
+```
+allen@k8s-node1:/etc/kubernetes$ sudo chmod -777 /var/lib/kubelet/pki/kubelet-client-current.pem
+```
+
+- step5. 在非Master节点上查看集群pod信息
+
+```
+allen@k8s-node1:/etc/kubernetes$ kubectl get pods -A -o wide
+NAMESPACE     NAME                                 READY   STATUS    RESTARTS   AGE   IP              NODE         NOMINATED NODE   READINESS GATES
+kube-system   coredns-55dffbd598-8rcfq             1/1     Running   0          20h   10.244.0.3      k8s-master   <none>           <none>
+kube-system   coredns-55dffbd598-w4c4z             1/1     Running   0          20h   10.244.0.2      k8s-master   <none>           <none>
+kube-system   etcd-k8s-master                      1/1     Running   0          20h   192.168.0.154   k8s-master   <none>           <none>
+kube-system   kube-apiserver-k8s-master            1/1     Running   0          20h   192.168.0.154   k8s-master   <none>           <none>
+kube-system   kube-controller-manager-k8s-master   1/1     Running   0          20h   192.168.0.154   k8s-master   <none>           <none>
+kube-system   kube-flannel-ds-7w96q                1/1     Running   0          15h   192.168.0.154   k8s-master   <none>           <none>
+kube-system   kube-flannel-ds-dxwnk                1/1     Running   0          15h   192.168.0.156   k8s-node2    <none>           <none>
+kube-system   kube-flannel-ds-tx967                1/1     Running   0          15h   192.168.0.155   k8s-node1    <none>           <none>
+kube-system   kube-proxy-5wvtm                     1/1     Running   0          15h   192.168.0.155   k8s-node1    <none>           <none>
+kube-system   kube-proxy-n52bm                     1/1     Running   0          15h   192.168.0.156   k8s-node2    <none>           <none>
+kube-system   kube-proxy-qzxsp                     1/1     Running   0          20h   192.168.0.154   k8s-master   <none>           <none>
+kube-system   kube-scheduler-k8s-master            1/1     Running   0          20h   192.168.0.154   k8s-master   <none>           <none>
 ```
