@@ -101,9 +101,12 @@ JSP页面通过JDBC直接访问MySQL数据库并展示数据.这里出于演示�
 
 在master节点上创建一个Deployment定义文件`mysql-deploy.yaml`:
 
-```yaml
+```
 soap@k8s-master:~$ vim mysql-deploy.yaml 
 soap@k8s-master:~$ cat mysql-deploy.yaml
+```
+
+```yaml
 # API版本
 apiVersion: apps/v1
 # 副本控制器Deployment
@@ -197,6 +200,9 @@ CONTAINER ID   IMAGE                                                COMMAND     
 ```
 soap@k8s-master:~$ vim mysql-svc.yaml
 soap@k8s-master:~$ cat mysql-svc.yaml 
+```
+
+```yaml
 apiVersion: v1
 # 声明是Kubernetes Service
 kind: Service
@@ -244,6 +250,9 @@ mysql   ClusterIP   10.107.16.60   <none>        3306/TCP   20s
 ```
 soap@k8s-master:~$ vim myweb-deploy.yaml
 soap@k8s-master:~$ cat myweb-deploy.yaml 
+```
+
+```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -294,6 +303,9 @@ myweb-6d5d5fccbc-s44f2   1/1     Running   0          2m38s
 ```
 soap@k8s-master:~$ vim myweb-svc.yaml
 soap@k8s-master:~$ cat myweb-svc.yaml 
+```
+
+```yaml
 apiVersion: v1
 kind: Service
 metadata:
@@ -650,6 +662,9 @@ kube-system       Active   47h
 ```
 soap@k8s-master:~$ vim development-namespace.yaml
 soap@k8s-master:~$ cat development-namespace.yaml
+```
+
+```yaml
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -695,6 +710,9 @@ kube-system       Active   47h
 ```
 soap@k8s-master:~$ vim busybox-pod.yaml
 soap@k8s-master:~$ cat busybox-pod.yaml
+```
+
+```yaml
 apiVersion: v1
 kind: Pod
 metadata:
