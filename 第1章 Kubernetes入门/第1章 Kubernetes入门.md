@@ -764,6 +764,260 @@ myweb-6d5d5fccbc-pjxhc   1/1     Running   0          25h
 myweb-6d5d5fccbc-s44f2   1/1     Running   0          25h
 ```
 
+### 1.4.3 应用类
+
+Kubernetes中属于应用类的概念和相应的资源对象类型最多,所以应用类也是要重点学习的一类.
+
+#### 1. Service与Pod
+
+应用类相关的资源对象主要是围绕Service(服务)和Pod这两个核心对象展开的.
+
+##### a. Service
+
+Service:一般指无状态服务,通常由多个程序副本提供服务,在特殊情况下也可以是有状态的单实例服务,比如MySQL这种数据存储类服务.和常规理解的服务不同,Kubernetes中的Service具有一个**全局唯一**的虚拟ClusterIP地址,Service一旦被创建,Kubernetes就会自动为其分配一个可用的ClusterIP地址,而且在Service的整个生命周期中,它的ClusterIP地址都不会改变,客户端可以通过虚拟IP地址 + 服务端口直接访问到该服务,再通过部署Kubernetes Cluster的DNS服务,就可以实现Service Name(域名)到ClusterIP地址的DNS映射功能,我们只要使用服务的名称(DNS名称)即可完成到目标服务的访问请求.传统架构中的棘手问题:服务发现,用这种方式得到了解决.同时,ClusterIP地址的设计,使得Kubernetes进一步实现了Service的透明负载均衡和故障自动恢复的高级特性.
+
+```
+soap@k8s-master:~$ kubectl get services
+NAME         TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)          AGE
+kubernetes   ClusterIP   10.96.0.1       <none>        443/TCP          2d3h
+mysql        ClusterIP   10.107.16.60    <none>        3306/TCP         29h
+myweb        NodePort    10.99.161.194   <none>        8080:30001/TCP   28h
+```
+
+通过分析、识别并建模系统中的所有服务,将它们都转换为微服务(Kubernetes Service),系统最终由多个提供不同业务能力而又彼此独立的微服务单元组成,服务之间通过TCP/IP进行通信,从而形成 强大又灵活的弹性网格,拥有强大的分布式能力、弹性扩展能力、容错能力,程序架构也变得简单和直观许多.
+
+![Kubernetes提供的微服务网格架构](./img/Kubernetes提供的微服务网格架构.png)
+
+##### b. Pod
+
+接下来说说与Service密切相关的核心资源对象:Pod.
+
+Pod是Kubernetes中最重要的基本概念之一,Pod的组成示意图如下:
+
+![Pod的组成示意图](./img/Pod的组成示意图.png)
+
+- Pause容器:每个Pod都有一个特殊的被称为"根容器"的Pause容器.Pause容器对应的镜像属于Kubernetes平台的一部分.
+- 其他容器:每个Pod包含1个或多个紧密相关的用户业务容器
+
+Kubernetes设计Pod且Pod有这样的结构的原因:
+
+- 为多进程之间的协作提供一个抽象模型,使用Pod作为基本的调度、复制等管理工作的最小单位,让多个应用进程能一起有效地调度和伸缩
+- Pod里的多个业务容器共享Pause容器的IP和Pause容器挂载的Volume,这样既简化了密切关联的业务容器之间的通信问题,也很好地解决了它们之间的文件共享问题
+
+Kubernetes为每个Pod都分配了唯一的IP地址,称为Pod IP.1个Pod中的多个容器共享Pod IP地址.Kubernetes要求底层网络支持Cluster内的任意2个Pod之间的TCP/IP直接通信,这通常采用[虚拟的二层网络技术](https://github.com/rayallen20/cloudNativeExercise/blob/master/note/module3-Docker%20core%20technology/class5-%E5%AE%B9%E5%99%A8%E7%BD%91%E7%BB%9C/class5-%E5%AE%B9%E5%99%A8%E7%BD%91%E7%BB%9C.md#33-%E7%BD%91%E7%BB%9C%E6%8F%92%E4%BB%B6-%E4%BB%A5flannel%E4%B8%BA%E4%BE%8B)实现,例如Flannel、Open vSwitch等,因此需要记住的是:**在Kubernetes中,一个Pod中的容器和其他主机上Pod中的容器能够直接通信.**
+
+```
+soap@k8s-master:~$ kubectl get pods -A -o wide
+NAMESPACE     NAME                                 READY   STATUS    RESTARTS      AGE     IP              NODE         NOMINATED NODE   READINESS GATES
+default       mysql-596b96985c-7w9kv               1/1     Running   0             30h     10.244.2.2      k8s-node2    <none>           <none>
+default       myweb-6d5d5fccbc-pjxhc               1/1     Running   0             29h     10.244.1.2      k8s-node1    <none>           <none>
+default       myweb-6d5d5fccbc-s44f2               1/1     Running   0             29h     10.244.2.3      k8s-node2    <none>           <none>
+development   busybox                              1/1     Running   3 (46m ago)   3h47m   10.244.1.3      k8s-node1    <none>           <none>
+kube-system   coredns-55dffbd598-8rcfq             1/1     Running   0             2d3h    10.244.0.3      k8s-master   <none>           <none>
+kube-system   coredns-55dffbd598-w4c4z             1/1     Running   0             2d3h    10.244.0.2      k8s-master   <none>           <none>
+kube-system   etcd-k8s-master                      1/1     Running   0             2d3h    192.168.0.154   k8s-master   <none>           <none>
+kube-system   kube-apiserver-k8s-master            1/1     Running   0             2d3h    192.168.0.154   k8s-master   <none>           <none>
+kube-system   kube-controller-manager-k8s-master   1/1     Running   0             2d3h    192.168.0.154   k8s-master   <none>           <none>
+kube-system   kube-flannel-ds-7w96q                1/1     Running   0             46h     192.168.0.154   k8s-master   <none>           <none>
+kube-system   kube-flannel-ds-dxwnk                1/1     Running   0             45h     192.168.0.156   k8s-node2    <none>           <none>
+kube-system   kube-flannel-ds-tx967                1/1     Running   0             45h     192.168.0.155   k8s-node1    <none>           <none>
+kube-system   kube-proxy-5wvtm                     1/1     Running   0             45h     192.168.0.155   k8s-node1    <none>           <none>
+kube-system   kube-proxy-n52bm                     1/1     Running   0             45h     192.168.0.156   k8s-node2    <none>           <none>
+kube-system   kube-proxy-qzxsp                     1/1     Running   0             2d3h    192.168.0.154   k8s-master   <none>           <none>
+kube-system   kube-scheduler-k8s-master            1/1     Running   0             2d3h    192.168.0.154   k8s-master   <none>           <none>
+```
+
+注:此处busybox的重启是由于定义时通过commands指定了容器每1h重启1次,并非Pod启动失败.
+
+```
+soap@k8s-master:~$ kubectl logs busybox -n development
+```
+
+```
+allen@k8s-node1:~$ sudo docker logs 51e86ca6402d
+allen@k8s-node1:~$ sudo docker ps
+CONTAINER ID   IMAGE                                                COMMAND                  CREATED          STATUS          PORTS     NAMES
+51e86ca6402d   busybox                                              "sleep 3600"             52 minutes ago   Up 52 minutes             k8s_busybox_busybox_development_dd3da318-a83a-45d0-ba71-470f3708a4d5_5
+50338b44ae96   registry.aliyuncs.com/google_containers/pause:3.6    "/pause"                 6 hours ago      Up 6 hours                k8s_POD_busybox_development_dd3da318-a83a-45d0-ba71-470f3708a4d5_0
+579e3d54df61   kubeguide/tomcat-app                                 "catalina.sh run"        31 hours ago     Up 31 hours               k8s_web_myweb-6d5d5fccbc-pjxhc_default_ba960c26-3dc1-4d3e-8ebf-420d45372c2c_0
+a057b63466db   registry.aliyuncs.com/google_containers/pause:3.6    "/pause"                 31 hours ago     Up 31 hours               k8s_POD_myweb-6d5d5fccbc-pjxhc_default_ba960c26-3dc1-4d3e-8ebf-420d45372c2c_0
+e2fa65023fb0   8cb5de74f107                                         "/opt/bin/flanneld -…"   47 hours ago     Up 47 hours               k8s_kube-flannel_kube-flannel-ds-tx967_kube-system_5c17a2fe-70f6-4350-9005-1b3b1ea1e9f1_0
+dca117d2a724   registry.aliyuncs.com/google_containers/kube-proxy   "/usr/local/bin/kube…"   2 days ago       Up 2 days                 k8s_kube-proxy_kube-proxy-5wvtm_kube-system_81fe160b-3357-45a4-9674-7326e1b15aa3_0
+fc38d9748b93   registry.aliyuncs.com/google_containers/pause:3.6    "/pause"                 2 days ago       Up 2 days                 k8s_POD_kube-flannel-ds-tx967_kube-system_5c17a2fe-70f6-4350-9005-1b3b1ea1e9f1_0
+cb88cc334821   registry.aliyuncs.com/google_containers/pause:3.6    "/pause"                 2 days ago       Up 2 days                 k8s_POD_kube-proxy-5wvtm_kube-system_81fe160b-3357-45a4-9674-7326e1b15aa3_0
+allen@k8s-node1:~$ sudo docker logs 51e86ca6402d
+```
+
+可以看到日志中是没有信息的.
+
+Pod有2种类型:
+
+- 普通的Pod
+
+	- 普通的Pod一旦被创建,就会被放入etcd存储,随后被Kubernetes Master调度到某个具体的Node上并绑定(Binding).该Pod被运行它的Node上的kubelet进程实例化成一组相关的Docker容器并启动.在默认情况下,当Pod中的某个容器停止时,Kubernetes会自动检测到这个问题并且重新启动这个Pod(即:重启Pod中的所有容器),如果Pod所在的Node宕机,就会将该Node上所有的Pod都重新调度到其他节点上.
+
+- 静态Pod(Static Pod)
+
+	- Static Pod比较特殊,它并没有被存储在Kubernetes的etcd中,而是被存放在某个具体的Node上的一个文件中,并且只能在该Node上启动、运行.
+
+![Pod-容器与Node的关系](./img/Pod-容器与Node的关系.png)
+
+下面是我们在之前的Hello World例子里用到的myweb这个Pod的资源定义文件(实际上之前的例子里也没用到这个文件,但不知道为啥书上就这么写了 = =|||):
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: myweb
+  labels:
+    name: myweb
+spec:
+  containers:
+  - name: myweb
+    image: kubeguide/tomcat-app:v1
+    ports:
+    - containerPort: 8080
+```
+
+在以上定义中:
+
+- `kind: Pod`:表示该资源对象的类型为Pod
+- `metadata.name`:Pod的名称
+- `metadata.labels`:声明资源对象的标签.本例中声明myweb拥有一个`name=myweb`的标签
+- `spec`:用于定义Pod中所包含的容器组.
+	- 此处定义了一个名为myweb的容器(`spec.containers.name`)
+	- 该容器使用的镜像为`kubeguide/tomcat-app:v1`(`spec.containers.image`)
+	- 该容器在8080端口启动容器进程(`spec.containers.ports.containerPort`)
+- Endpoint:表示该Pod中的1个服务进程的对外通信地址.Endpoint是由Pod的IP地址 + 容器端口组成的概念.
+
+1个Pod也存在具有多个Endpoint的情况,比如当我们把Tomcat定义为1个Pod时,可以对外暴露管理端口与服务端口这2个Endpoint.
+
+Pod Volume:被定义在Pod上,然后被各个容器挂载到自己的文件系统中.和Docker Volume的概念类似.简单来讲Volume就是被挂载到Pod里的文件目录.
+
+Event:Event是一个事件的记录,记录了事件最早产生时间(FristSeen)、最后重现时间(LastSeen)、重复次数(Count)、发起者(From)、类型(Type),以及导致此事件的原因(Reason)等信息.
+
+Event通常会被关联到某个具体的资源对象上,是排查故障的重要参考信息.之前我们看到在Node的描述信息中包括Event,而Pod同样有Event记录.当某个Pod迟迟无法创建时,可以用`kubectl describe pod <POD_NAME>`来查看描述信息,进而定位问题.
+
+```
+soap@k8s-master:~$ kubectl describe pod myweb-6d5d5fccbc-pjxhc|grep -i event
+Events:                      <none>
+```
+
+此处由于没有失败案例,故Events是空.
+
+![Pod及周边对象](./img/Pod及周边对象.png)
+
+简单理解:
+
+- Pod:Kubernetes的最小工作单元.每个Pod包含1个或多个容器.Pod中的容器作为一个整体被Master调度到1个Node上运行.可以认为Pod是Kubernetes"内部静态"的一个概念.
+- Service:定义了外界访问一组特定Pod的方式.Service有自己的IP和端口,Service为Pod提供了负载均衡.可以认为Service是Kubernetes"外部静态"的一个概念.
+
+#### 2. Label与Label Selector
+
+##### a. Label
+
+- Label:1个Label是一个`key=value`的键值对.其中的key和value由用户自己指定.
+
+Label可以被附加到各种资源对象上，例如Node、Pod、Service、Deployment等.一个资源对象可以定义任意数量的Label,反之,同一个Label也可以被添加到任意数量的资源对象上.
+
+Label通常在资源对象定义时确定,也可以在对象创建后动态添加或者删除.**可以通过给指定的资源对象捆绑一个或多个不同的Label来实现多维度的资源分组管理功能**,以便灵活、方便地进行资源分配、调度、配置、部署等管理工作.
+
+例:部署不同版本的应用到不同的环境中,以及监控、分析应用(日志记录、监控、告警)等.一些常用Label示例如下:
+
+- 版本标签:`release: stable`和`release: canary`
+
+	- 注: Canary releasing来自"矿工的金丝雀"的历史故事.金丝雀曾经经常被用作煤矿开采的预警系统.矿井中的一氧化碳或甲烷等有毒气体会在影响矿工之前杀死这些金丝雀,矿工们会根据金丝雀的状态,判断矿井是否安全.
+	- 这种版本通常用于获取开发过程中的真实反馈(比如Android Studio在升级时就有Canary Channel).在计算机领域把这种发布最新预览版的技术称之为Bleeding Edge.通常它用来形容一种最新但是并不完美的技术,因为不完美,也就意味着使用它可能会对产量和稳定性造成影响.
+
+- 环境标签:`environment: dev`、`environment: qa`和`environment: production`
+- 架构标签:`tier: frontend`、`tier: backend`和`tier: middleware`
+	- 注:`tier`表示垂直方向的"层";`layer`表示水平方向的"层".[参考文章](https://blog.csdn.net/paxhujing/article/details/79002257)
+- 分区标签:`partition: customerA`和`partition: customerB`
+- 质量管控标签:`track: daily`和`track: weekly`
+
+##### b. Label Selector
+
+- Label Selector:用于查询和筛选具有某些Label的资源对象.Kubernetes通过这种方式实现了类似SQL的简单又通用的对象查询机制
+
+Label Selector可以被类比为SQL语句中的where查询条件,例如,`name=redis-slave`这个Label Selector作用于Pod时,可以被类比为`select * from pod where pod's name='redis-slave'`这样的语句.
+
+当前有2种Label Selector表达式:
+
+- 基于等式的(Equality-based)Selector表达式:采用等式类表达式匹配标签
+
+	- 例:`name=redis-slave`
+		- 匹配所有具有`name=redis-slave`标签的资源对象
+	
+	- 例:`env !=production`
+		- 匹配所有不具有`env=production`标签的资源对象.比如`env=test`就是满足此条件的标签之一
+
+- 基于集合的(Sed-based)Selector表达式:使用集合操作类表达式匹配标签
+	- 例:`name in(redis-master,redis-slave)`
+		- 匹配所有具有`name=redis-master`标签或者`name=redis-slave`标签的资源对象
+	- 例:`name not in(php-frontend)`
+		- 匹配所有不具有`name=php-frontend`标签的资源对象
+
+可以通过多个Label Selector表达式的组合来实现复杂的侧条件选择,多个表达式之间用`,`进行分隔即可,几个条件之间是逻辑且的关系,即:同时满足多个条件.
+
+- 例:`name=redis-slave,env!=production`
+- 例:`name not in(php-frontend),env!=production`
+
+TODO:此处not in的例子语法不一定对,因为书上写的是`notin`而非`not in`.但书上前面举的例子写的是`not in`,网上查了一下也没查到,暂时存疑.
+
+一个更为复杂的例子:
+
+假设为Pod定义了3个Label:
+
+- release
+- env
+- role
+
+不同的Pod定义了不同的Label值.
+
+- 若设置Label Selector为`role=frontend`,则选取到Node1和Node2
+
+![Label Selector的作用范围1](./img/Label-Selector的作用范围1.png)
+
+- 若设置Label Selector为`release=beta`,则选取到Node2和Node3
+
+![Label Selector的作用范围2](./img/Label-Selector的作用范围2.png)
+
+使用Label可以给对象创建多组标签,Label和Label Selector共同构成了Kubernetes系统中核心的应用模型,可对被管理对象进行精细的分组管理,同时实现了整个集群的高可用性.
+
+Label也是Pod的重要属性之一,其重要性仅次于Pod的端口,我们几乎见不到没有Label的Pod.以myweb的Pod为例(实际上前面的例子中并没有应用这个定义文件创建Pod),下面给它设定了 `app=myweb`的标签
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: myweb
+  labels:
+    name: myweb
+...
+```
+
+对应的myweb Service就是通过下面的标签选择器与myweb Pod发生关联的:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: myweb
+spec:
+  ...
+  # Label Selector
+  selector:
+    app: myweb
+```
+
+可以看到,Service很重要的一个属性就是Label Selector.如果把Label Selector写错了且恰好匹配到了另一种Pod实例,且对应的容器端口恰好正确(当然这是个极小概率的事件),那么出现的情况是:服务可以正常连接,但各种API调用都不符合预期结果.这种问题很难排查,特别是在一个有很多个Service的复杂系统中.
+
+
+
+
+
+
+
 
 
 
