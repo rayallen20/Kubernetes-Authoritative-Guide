@@ -1012,17 +1012,134 @@ spec:
 
 可以看到,Service很重要的一个属性就是Label Selector.如果把Label Selector写错了且恰好匹配到了另一种Pod实例,且对应的容器端口恰好正确(当然这是个极小概率的事件),那么出现的情况是:服务可以正常连接,但各种API调用都不符合预期结果.这种问题很难排查,特别是在一个有很多个Service的复杂系统中.
 
+#### 3. Pod与Deployment
 
+- Deployment:大部分Service都是无状态服务,可以由多个Pod副本实例提供服务.通常情况下,每个Service对应的Pod服务实例数量都是固定的.如果一个一个地手工创建这些Pod实例,就太麻烦了.通常是提供一个模板(Template),然后由程序根据指定的模板自动创建指定数量的Pod实例.Deployment就是负责"创建指定数量的Pod实例"这一工作的
 
+之前例子中的Deployment案例:
 
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: myweb
+  name: myweb
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: myweb
+  template:
+    metadata:
+      labels:
+        app: myweb
+    spec:
+      containers:
+      - image: kubeguide/tomcat-app:v1
+        name: web
+        ports:
+        - containerPort: 8080
+        env:
+        - name: MYSQL_SERVICE_HOST
+          value: 10.107.16.60
+```
 
+- `spec.replicas`:Pod的副本数量
+- `spec.selector`:目标Pod的标签选择器
+- `spec.template`:用于自动创建新Pod副本的模板
 
+Q:如果只打算创建1个Pod副本实例,是否还需要Deployment来自动创建?
 
+A:需要.因为Deployment除了自动创建Pod副本外,还有一个重要特性:**自动控制**.例如:如果Pod所在的节点发生宕机事件,Kubernetes就会第一时间观察到这个故障,并自动创建一个新的Pod对象,将这个新创建的Pod对象调度到其他合适的节点上,Kubernetes会实时监控集群中目标Pod的副本数量,并且尽力与Deployment中声明的replicas数量保持一致.
 
+- step1. 创建一个名为`tomcat-deployment.yaml`的Deployment描述文件
 
+```
+soap@k8s-master:~$ vim tomcat-deployment.yaml
+soap@k8s-master:~$ cat tomcat-deployment.yaml
+```
 
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tomcat-deploy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      tier: frontend
+    matchExpressions:
+      - {key: tier, operator: In, values: [frontend]}
+  template:
+    metadata:
+      labels:
+        app: app-demo
+        tier: frontend
+    spec:
+      containers:
+        - name: tomcat-demo
+          image: tomcat
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+```
 
+- step2. 创建Deployment对象
 
+```
+soap@k8s-master:~$ kubectl create -f tomcat-deployment.yaml
+deployment.apps/tomcat-deploy created
+```
+
+- step3. 查看创建结果,若仍在创建Deployment,则输出如下:
+
+```
+NAME               DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
+tomcat-deploy      1         1         1            1           1s
+```
+
+- DESIRED:Pod副本数量的期望值,即文件定义中的`spec.replicas`
+- CURRENT:当前replicas的值,实际上是Deployment创建的ReplicaSet对象里的replicas值,这个值不断增加,直到达到DESIRED为止,表明整个部署过程完成
+- UP-TO-DATE:最新版本的Pod的副本数量,用于指示在滚动升级的过程中,有多少个副本已经成功升级
+- AVAILABLE:当前集群中可用的Pod副本数量,即集群中当前存活的Pod数量
+
+Deployment资源对象与ReplicaSet资源对象密切相关,Kubernetes内部会根据Deployment对象自动创建与该Deployment对象相关联的ReplicaSet对象.
+
+ReplicaSet实现了Pod的多副本管理.使用Deployment时会自动创建ReplicaSet,也就是说Deployment是通过ReplicaSet来管理Pod的多个副本的,通常不需要直接使用ReplicaSet.
+
+查看集群中的replicaSet:
+
+```
+soap@k8s-master:~$ kubectl get replicasets
+NAME                       DESIRED   CURRENT   READY   AGE
+mysql-596b96985c           1         1         1       2d8h
+myweb-6d5d5fccbc           2         2         2       2d7h
+tomcat-deploy-7d7c57fc94   1         1         1       4m27s
+```
+
+查看Pods:
+
+```
+soap@k8s-master:~$ kubectl get pods
+NAME                             READY   STATUS    RESTARTS        AGE
+mysql-596b96985c-7w9kv           1/1     Running   1 (7h51m ago)   2d9h
+myweb-6d5d5fccbc-pjxhc           1/1     Running   1 (7h49m ago)   2d7h
+myweb-6d5d5fccbc-s44f2           1/1     Running   1 (7h51m ago)   2d7h
+tomcat-deploy-7d7c57fc94-9q7bg   1/1     Running   0               11m
+```
+
+可以发现,刚刚创建的Deployment,与之关联的ReplicaSet名称为`tomcat-deploy-7d7c57fc94`,而Pod的名称为`tomcat-deploy-7d7c57fc94-9q7bg`.**这种命名很清晰地表明了一个ReplicaSet对象创建了哪些Pod**.对于Pod滚动升级(Pod Rolling update)这种复杂的操作过程来说,很容易排查错误.
+
+Deployment的使用场景:
+
+- 创建一个Deployment对象来完成相应Pod副本数量的创建
+- 检查Deployment的状态,确认部署动作是否完成(Pod副本数量是否达到预期的值)
+- 更新Deployment,以便创建新的Pod(比如镜像升级),如果当前Deployment不稳定,则回滚到一个早先的Deployment版本
+- 扩展Deployment以应对高负载
+
+![Pod、Deployment与Service的逻辑关系](./img/Pod、Deployment与Service的逻辑关系.jpg)
 
 
 
