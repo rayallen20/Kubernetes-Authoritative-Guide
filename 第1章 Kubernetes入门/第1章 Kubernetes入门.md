@@ -1313,25 +1313,183 @@ tomcat-service-multiple-ports   ClusterIP   10.111.254.159   <none>        8080/
 
 可以看到Service的ClusterIP地址为`10.111.254.159`.
 
+#### 5. Service的外网访问问题
 
+之前说过,服务的ClusterIP地址在Kubernetes集群内才能被访问,那么如何让集群外的应用访问我们的服务呢?
 
+首先需要明白Kubernetes的3种IP:
 
+- Node IP:Node的IP地址
 
+	- Node IP是Kubernetes集群中每个节点的物理网卡的IP地址,是一个真实存在的物理网络,所有属于这个网络的服务器都能通过这个网络直接通信,即使在这个网络中有部分节点不属于这个Kubernetes集群,也能够通过这个网络直接通信.这也表明Kubernetes集群之外的节点访问Kubernetes集群内的某个节点或者TCP/IP服务时,都必须通过Node IP通信.
+ 
+- Pod IP:Pod的IP地址
 
+	- Pod IP是每个Pod的IP地址,在使用Docker作为容器支持引 擎的情况下,它是Docker Engine根据`docker0`网桥的IP地址段进行分配的,通常是一个虚拟二层网络.前面说过,Kubernetes要求位于不同Node上的Pod都能够彼此直接通信,所以Kubernetes中一个Pod里的容器访问另外一个Pod里的容器时,就是通过Pod IP所在的虚拟二层网络进行通信的,而真实的TCP/IP流量是通过Node IP所在的物理网卡流出的
+	- 注:由于我的环境使用的是flannel作为网络插件,所以Pod IP是根据`flannel.1`的网桥IP地址段来分配的
 
+	- 在master上查看pod
+	
+	```
+	soap@k8s-master:~$ kubectl get pods -A -o wide
+	NAMESPACE     NAME                                 READY   STATUS    RESTARTS       AGE     IP              NODE         NOMINATED NODE   READINESS GATES
+	default       mysql-596b96985c-7w9kv               1/1     Running   1 (23h ago)    3d1h    10.244.2.4      k8s-node2    <none>           <none>
+	...
+	kube-system   kube-scheduler-k8s-master            1/1     Running   1 (23h ago)    3d22h   192.168.0.154   k8s-master   <none>           <none>
+	```
+	
+	- 可以看到运行在k8s-node2上的名为`mysql-596b96985c-7w9kv`的pod,其Pod IP为`10.244.2.4`
 
+	- 在`k8s-node2`上查看网桥信息
+	
+	```
+	nikolai@k8s-node2:~$ ip a
+	1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
+	    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+	    inet 127.0.0.1/8 scope host lo
+	       valid_lft forever preferred_lft forever
+	    inet6 ::1/128 scope host 
+	       valid_lft forever preferred_lft forever
+	2: enp0s3: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP group default qlen 1000
+	    link/ether 08:00:27:04:b6:d9 brd ff:ff:ff:ff:ff:ff
+	    inet 192.168.0.156/24 brd 192.168.0.255 scope global enp0s3
+	       valid_lft forever preferred_lft forever
+	    inet6 fe80::a00:27ff:fe04:b6d9/64 scope link 
+	       valid_lft forever preferred_lft forever
+	...
+	4: flannel.1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1450 qdisc noqueue state UNKNOWN group default 
+	    link/ether e6:f7:6c:e8:66:4d brd ff:ff:ff:ff:ff:ff
+	    inet 10.244.2.0/32 scope global flannel.1
+	       valid_lft forever preferred_lft forever
+	    inet6 fe80::e4f7:6cff:fee8:664d/64 scope link 
+	       valid_lft forever preferred_lft forever
+	...
+	```
+	
+	- 可以看到网桥`flannel.1`的网段为`10.244.2.0/32`
 
+- Service IP:Service的IP地址
 
+	- 在Kubernetes集群内,Service的ClusterIP地址属于集群内的地址,无法在集群外直接使用这个地址
 
+为了解决这个问题,Kubernetes首先引入了NodePort这个概念,NodePort是解决集群外的应用访问集群内服务的直接、有效的常见做法
 
+- step1. 以之前的tomcat-service为例,按如下文件定义Service
 
+```
+soap@k8s-master:~$ vim tomcat-service-nodeport.yaml
+soap@k8s-master:~$ cat tomcat-service-nodeport.yaml
+```
 
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: tomcat-service-nodeport
+spec:
+  type: NodePort
+  ports:
+    - port: 8080
+      nodePort: 31002
+  selector:
+    tier: frontend
+```
 
+- `spec.ports.nodePort`:手动指定`tomcat-service-nodeport`的NodePort.若不指定,则由Kubernetes自动为该服务分配一个可用的端口.该属性指定了容器在Node上暴露的端口.
 
+- step2. 创建服务
 
+```
+soap@k8s-master:~$ kubectl create -f tomcat-service-nodeport.yaml 
+service/tomcat-service-nodeport created
+```
 
+- step3. 查看服务背后的Pod的endpoint情况
 
+```
+soap@k8s-master:~$ kubectl get endpoints
+NAME                            ENDPOINTS                         AGE
+kubernetes                      192.168.0.154:6443                3d22h
+mysql                           10.244.2.4:3306                   3d
+myweb                           10.244.1.5:8080,10.244.2.5:8080   2d23h
+tomcat-service                  10.244.1.6:8080                   126m
+tomcat-service-multiple-ports   10.244.1.6:8085,10.244.1.6:8080   108m
+tomcat-service-nodeport         10.244.1.6:8080                   37s
+```
 
+- step4. 查看服务被分配的IP地址等情况
+
+```
+soap@k8s-master:~$ kubectl get svc tomcat-service-nodeport
+NAME                      TYPE       CLUSTER-IP     EXTERNAL-IP   PORT(S)          AGE
+tomcat-service-nodeport   NodePort   10.108.15.65   <none>        8080:31002/TCP   103s
+```
+
+- step5. 为确认Pod具体运行在了哪些节点上,查看pod的情况
+
+```
+soap@k8s-master:~$ kubectl get pods -o wide
+NAME                             READY   STATUS    RESTARTS      AGE    IP           NODE        NOMINATED NODE   READINESS GATES
+mysql-596b96985c-7w9kv           1/1     Running   1 (24h ago)   3d1h   10.244.2.4   k8s-node2   <none>           <none>
+myweb-6d5d5fccbc-pjxhc           1/1     Running   1 (24h ago)   3d     10.244.1.5   k8s-node1   <none>           <none>
+myweb-6d5d5fccbc-s44f2           1/1     Running   1 (24h ago)   3d     10.244.2.5   k8s-node2   <none>           <none>
+tomcat-deploy-7d7c57fc94-9q7bg   1/1     Running   0             16h    10.244.1.6   k8s-node1   <none>           <none>
+```
+
+可以看到,`tomcat-deploy-7d7c57fc94-9q7bg`运行在了名为`k8s-node1`的Node上,在我的环境中,该Node的IP地址为`192.168.0.155`
+
+![nodePort-Tomcat](./img/nodePort-Tomcat.png)
+
+注:此处请求已经打到pod里的container上了,但是我拉的容器里,`webapps/`下没东西,所以此处404了.
+
+- 在容器里查看`webapps/`下的文件情况
+
+```
+allen@k8s-node1:~$ sudo docker exec -it 63dad6de9e8a /bin/bash
+root@tomcat-deploy-7d7c57fc94-9q7bg:/usr/local/tomcat# cd webapps
+root@tomcat-deploy-7d7c57fc94-9q7bg:/usr/local/tomcat/webapps# pwd
+/usr/local/tomcat/webapps
+root@tomcat-deploy-7d7c57fc94-9q7bg:/usr/local/tomcat/webapps# ls
+```
+
+- 在Node上查看端口映射情况
+
+```
+allen@k8s-node1:~$ sudo netstat -tlp|grep 31002
+tcp        0      0 0.0.0.0:31002           0.0.0.0:*               LISTEN      1571/kube-proxy 
+```
+
+但NodePort还没有完全解决外部访问Service的所有问题,比如负载均衡问题.假如在集群中有10个Node,则此时最好有一个负载均衡器,外部的请求只需访问此负载均衡器的IP地址,由负载均衡器负责转发流量到后面某个Node的NodePort上,如下图示:
+
+![NodePort与负载均衡器](./img/NodePort与负载均衡器.png)
+
+图中的负载均衡器组件独立于Kubernetes集群之外,通常是一个硬件的负载均衡器,也有以软件方式实现的,例如HAProxy或者Nginx.对于每个Service,通常需要配置一个对应的负载均衡器实例来转发流量到后端的Node上,这的确增加了工作量及出错的概率.于是Kubernetes提供了自动化的解决方案,如果我们的集群运行在谷歌的公有云GCE上,那么只要把Service的`type=NodePort`改为`type=LoadBalancer`,Kubernetes就会自动创建一个对应的负载均衡器实例并返回它的IP地址供外部客户端使用.其他公有云提供商只要实现了支持此特性的驱动,则也可以达到以上目的.此外,也有MetalLB这样的面向私有集群的Kubernetes负载均衡方案.
+
+NodePort的确功能强大且通用性强,但也存在一个问题:每个Service都需要在Node上独占一个端口,而端口又是有限的物理资源,那能不能让多个Service共用一个对外端口呢?这就是后来增加的Ingress资源对象所要解决的问题.在一定程度上,可以把Ingress的实现机制理解为基于Nginx的支持虚拟主机的HTTP代理.下面是一个Ingress的实例:
+
+```yaml
+kind: Ingress
+metadata:
+  name: name-virtual-host-ingress
+spec:
+  rules:
+    - host: foo.bar.com
+      http:
+        paths:
+          - backend:
+              serviceName: service1
+              servicePort: 80
+    - host: bar.foo.com
+      http:
+        paths:
+          - backend:
+              serviceName: service2
+              servicePort: 80
+```
+
+在本例中,到虚拟域名`foo.bar.com`请求的流量会被路由到service1,到虚拟域名`bar.foo.com`的流量会被路由到service2.
+
+通过这个例子可以看出,Ingress其实只能将多个HTTP(HTTPS)的Service"聚合",通过虚拟域名或者URL Path的特征进行路由转发的功能.考虑到常见的微服务都采用了HTTP REST协议,所以Ingress这种聚合多个Service并将其暴露到外网的做法还是很有效的.
 
 
 
