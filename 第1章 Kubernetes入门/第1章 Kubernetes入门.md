@@ -792,6 +792,8 @@ myweb        NodePort    10.99.161.194   <none>        8080:30001/TCP   28h
 
 接下来说说与Service密切相关的核心资源对象:Pod.
 
+Pod:Kubernetes的最小工作单元.每个Pod包含1个或多个容器.Pod中的容器会作为一个整体被Master调度到一个Node上运行.
+
 Pod是Kubernetes中最重要的基本概念之一,Pod的组成示意图如下:
 
 ![Pod的组成示意图](./img/Pod的组成示意图.png)
@@ -1141,7 +1143,7 @@ Deployment的使用场景:
 
 ![Pod、Deployment与Service的逻辑关系](./img/Pod、Deployment与Service的逻辑关系.jpg)
 
-#### 4. Pod与Deployment
+#### 4. Service的ClusterIP地址
 
 每个Pod都会被分配一个单独的IP地址,而且每个Pod都提供了一个独立的Endpoint(Pod IP + containerPort)以便能够被客户端访问到,多个Pod副本组成了一个集群来提供服务,客户端如何访问这些Pod?
 
