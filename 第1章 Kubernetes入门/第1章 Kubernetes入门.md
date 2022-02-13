@@ -1141,13 +1141,202 @@ Deployment的使用场景:
 
 ![Pod、Deployment与Service的逻辑关系](./img/Pod、Deployment与Service的逻辑关系.jpg)
 
+#### 4. Pod与Deployment
+
+每个Pod都会被分配一个单独的IP地址,而且每个Pod都提供了一个独立的Endpoint(Pod IP + containerPort)以便能够被客户端访问到,多个Pod副本组成了一个集群来提供服务,客户端如何访问这些Pod?
+
+传统的做法是部署一个负载均衡器(软件或硬件),为这组Pod开启一个对外的服务端口(如8000端口),并且将这些Pod的Endpoint列表加入该对外服务端口的转发列表中,客户端就可以通过负载均衡器的对外IP地址 + 端口来访问此服务了.
+
+Kubernetes也是类似的做法,Kubernetes内部在每个Node上都运行了一套全局的虚拟负载均衡器,自动注入并自动实时更新集群中所有Service的路由表,通过iptables或者IPVS机制,把对Service的请求转发到其后端对应的某个Pod实例上,并在内部实现服务的负载均衡与会话保持机制.
+
+不仅如此,Kubernetes还采用了一种很巧妙又影响深远的设计:ClusterIP地址.Pod的Endpoint地址会随着Pod的销毁和重新创建而发生改变,因为新Pod的IP地址与之前旧Pod的不同.
+
+但Service不同.Service一旦被创建,Kubernetes就会自动为它分配一个全局唯一的虚拟IP地址:ClusterIP地址.而且在Service的整个生命周期内,其ClusterIP地址不会发生改变.这样一来,每个服务就变成了具备唯一IP地址的通信节点,远程服务之间的通信问题就变成了基础的TCP网络通信问题.
+
+任何分布式系统都会涉及"服务发现"这个基础问题.大多数分布式系统都通过提供特定的API来实现服务发现功能.但这样做会导致平台的侵入性较强,且增加了开发、测试的难度(所有需要服务发现功能的服务,都需要在代码中调用这个特定的API来完成服务发现,因此侵入性较强,且增加难度).Kubernetes则采用了直观朴素的思路轻松解决了这个棘手的问题:只要用Service的Name与ClusterIP地址做一个DNS域名映射即可.
+
+例:定义了一个MySQL Service.该Service的名称是mydbserver,Service的端口是3306.则在代码中通过`mydbserver:3306`即可访问此服务.不再需要任何API来获取服务的IP地址和端口信息.
+
+之所以说ClusterIP地址是一种虚拟IP地址,有以下原因:
+
+- ClusterIP地址仅仅作用于Kubernetes Service这个对象,并由Kubernetes管理和分配IP地址(ClusterIP来源于ClusterIP地址池),与Node和Master所在的物理网络完全无关
+- 因为没有一个"实体网络对象"来响应,所以ClusterIP地址无法被Ping通.ClusterIP地址只能与Service Port组成一个具体的服务访问端点,单独的ClusterIP不具备TCP/IP通信的基础
+- ClusterIP属于Kubernetes集群这个封闭的空间,集群外的节点 要访问这个通信端口,则需要做一些额外的工作
+
+刚刚我们创建了一个名为`tomcat-deploy`的Deployment资源对象,现在为该Deployment创建Service:
+
+- step1. 创建一个名为`tomcat-service.yaml`的Service定义文件
+
+```
+soap@k8s-master:~$ vim tomcat-service.yaml
+soap@k8s-master:~$ cat tomcat-service.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: tomcat-service
+spec:
+  ports:
+    - port: 8080
+  selector:
+    tier: frontend
+```
+
+- `kind`:定义资源类型为Service
+- `metadata.name`:定义了该Service名为`tomcat-service`
+- `spec.ports.port`:定义服务端口为8080
+- `spec.selector`:定义所有拥有标签`tier=frontend`的Pod实例都属于该服务
+
+- step2. 创建服务
+
+```
+soap@k8s-master:~$ kubectl create -f tomcat-service.yaml 
+service/tomcat-service created
+```
+
+- step3. 查看endpoints
+
+```
+soap@k8s-master:~$ kubectl get endpoints
+NAME             ENDPOINTS                         AGE
+kubernetes       192.168.0.154:6443                3d20h
+mysql            10.244.2.4:3306                   2d22h
+myweb            10.244.1.5:8080,10.244.2.5:8080   2d21h
+tomcat-service   10.244.1.6:8080                   65s
+```
+
+此处我们查看的是Pod的Endpoint信息(Pod的IP地址和服务监听的端口),而非Service的ClusterIP地址
+
+- 查看服务`tomcat-service`被分配的ClusterIP地址,以及更多信息
+
+```
+soap@k8s-master:~$ kubectl get svc tomcat-service -o yaml
+apiVersion: v1
+kind: Service
+metadata:
+  creationTimestamp: "2022-02-13T06:47:17Z"
+  name: tomcat-service
+  namespace: default
+  resourceVersion: "197557"
+  uid: 21142f0b-ec99-493f-8fc3-51993569698e
+spec:
+  clusterIP: 10.107.204.29
+  clusterIPs:
+  - 10.107.204.29
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+  - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+  - port: 8080
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    tier: frontend
+  sessionAffinity: None
+  type: ClusterIP
+status:
+  loadBalancer: {}
+```
+
+可以看到,该Service的ClusterIP地址为`10.107.204.29`.
+
+在`spec.ports`的定义中:
+
+- `targetPort`属性用于确定提供该服务的容器所暴露(Expose)的端口号,即具体的业务进程在容器内的targetPort上提供TCP/IP接入.若不指定,则默认与`port`属性值相同
+- `port`属性则定义了Service的端口
+
+前面定义Tomcat服务时,并没有指定`targetPort`,因此`targetPort`默认与`port`相同.
+
+- Headless Service:一种特殊的Service,与与普通Service的关键区别在于Headless Service没有ClusterIP地址.若解析Headless Service的DNS域名,则返回的是该Service对应的全部Pod的Endpoint列表.这意味着客户端是直接与后端的Pod建立TCP/IP连接进行通信的,没有通过虚拟ClusterIP地址进行转发,因此通信性能最高,等同于"原生网络通信".
+- 在Service的定义中设置`clusterIP:None`,即可定义一个Headless Service
+
+- Service的多端口问题
+
+很多服务都存在多个端口,通常一个端口提供业务服务,另一个端口提供管理服务.如如Mycat、Codis等常见中间件.Kubernetes Service支持多个Endpoint,**在存在多个Endpoint的情况下,要求每个Endpoint都定义一个名称进行区分**.
+
+Tomcat多端口的Service定义样例:
+
+- step1. 创建一个名为`tomcat-service-multiple-ports.yaml`的Service定义文件
+
+```
+soap@k8s-master:~$ vim tomcat-service-multiple-ports.yaml
+soap@k8s-master:~$ cat tomcat-service-multiple-ports.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: tomcat-service-multiple-ports
+spec:
+  ports:
+    - port: 8080
+      name: service-port
+    - port: 8085
+      name: shutdown-port
+  selector:
+    tier: frontend
+```
+
+- step2. 创建服务
+
+```
+soap@k8s-master:~$ kubectl create -f tomcat-service-multiple-ports.yaml 
+service/tomcat-service-multiple-ports created
+```
+
+- step3. 查看Service背后的Pod的endpoints信息
+
+```
+service/tomcat-service-multiple-ports created
+soap@k8s-master:~$ kubectl get endpoints
+NAME                            ENDPOINTS                         AGE
+kubernetes                      192.168.0.154:6443                3d20h
+mysql                           10.244.2.4:3306                   2d22h
+myweb                           10.244.1.5:8080,10.244.2.5:8080   2d22h
+tomcat-service                  10.244.1.6:8080                   18m
+tomcat-service-multiple-ports   10.244.1.6:8085,10.244.1.6:8080   20s
+```
+
+可以看到服务`tomcat-service-multiple-ports`有2个endpoint
+
+- step4. 查看Service的ClusterIP等信息
+
+```
+soap@k8s-master:~$ kubectl get svc tomcat-service-multiple-ports
+NAME                            TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)             AGE
+tomcat-service-multiple-ports   ClusterIP   10.111.254.159   <none>        8080/TCP,8085/TCP   73s
+```
+
+可以看到Service的ClusterIP地址为`10.111.254.159`.
 
 
 
 
 
 
-	
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
