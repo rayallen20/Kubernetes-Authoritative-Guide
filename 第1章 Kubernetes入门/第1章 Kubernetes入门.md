@@ -1569,13 +1569,15 @@ Job所控制的Pod副本是短暂运行的,可以将其视为一组容器,其中
 
 - ConfigMap:保存配置项(`key=value`)的一个Map.和编程语言中的Map不同,ConfigMap是分布式系统中"配置中心"的独特实现之一.几乎所有应用都需要一个静态的配置文件来提供启动参数,当这个应用是一个分布式应用,有多个副本部署在不同的机器上时,配置文件的分发就成为一个让人头疼的问题,所以很多分布式系统都有一个配置中心组件,来解决这个问题.但配置中心通常会引入新的API,从而导致应用的耦合和侵入(比如应用需要在代码中编写调用配置中心的拉取配置的API,导致配置中心侵入了应用,且二者有了耦合).Kubernetes则采用了一种简单的方案来规避这个问题,如下图示
 
-![ConfigMap配置集中化的一种简单方案](./img/ConfigMap配置集中化的一种简单方案.png)
+	![ConfigMap配置集中化的一种简单方案](./img/ConfigMap配置集中化的一种简单方案.png)
 
-具体做法:
-
-- 用户将配置文件的内容保存到ConfigMap中,key为配置文件的文件名,value为配置文件的内容,多个配置文件都可被放入同一个ConfigMap
-- 在建模用户应用时,在Pod里将ConfigMap定义为特殊的Volume进行挂载.在Pod被调度到某个具体Node上时,ConfigMap里的配置文件会被自动还原到本地目录下,然后映射到Pod里指定的配置目录下,这样用户的程序就可以无感知地读取配置了
-- 在ConfigMap的内容发生修改后,Kubernetes会自动重新获取 ConfigMap的内容,并在目标节点上更新对应的文件
+	具体做法:
+	
+	- 用户将配置文件的内容保存到ConfigMap中,key为配置文件的文件名,value为配置文件的内容,多个配置文件都可被放入同一个ConfigMap
+	
+	- 在建模用户应用时,在Pod里将ConfigMap定义为特殊的Volume进行挂载.在Pod被调度到某个具体Node上时,ConfigMap里的配置文件会被自动还原到本地目录下,然后映射到Pod里指定的配置目录下,这样用户的程序就可以无感知地读取配置了
+	
+	- 在ConfigMap的内容发生修改后,Kubernetes会自动重新获取 ConfigMap的内容,并在目标节点上更新对应的文件
 
 - Secret:Secret也用于解决应用配置的问题,不过它解决的是对敏感信息的配置问题(比如数据库的用户名和密码、应用的数字证书、Token、SSH密钥及其他需要保密的敏感配置).对于这类敏感信息,我们可以创建一个Secret对象,然后被Pod引用.Secret中的数据要求以BASE64编码格式存放.注意,BASE64编码并不是加密的.在Kubernetes 1.7版本以后,Secret中的数据才可以以加密的形式进行保存,更加安全
 
@@ -1811,21 +1813,118 @@ spec:
 
 除了动态创建PV,PV动态扩容、快照及克隆的能力也是Kubernetes社区正在积极研发的高级特性.
 
+### 1.4.5 安全类
 
+安全始终是Kubernetes发展过程中的一个关键领域.
 
+从本质上来说,Kubernetes可被看作一个多用户共享资源的资源管理系统.这里的资源主要是各种Kubernetes里的各类资源对象,比如Pod、Service、Deployment等.只有通过认证的用户才能通过Kubernetes的API Server查询、创建及维护相应的资源对象.理解这一点很关键.
 
+Kubernetes里的用户有2类:
 
+- 研发人员开发的运行在Pod里的应用
+- 普通用户.例如`kubectl`命令行工具,基本上由指定的运维人员(集群管理员)使用.
 
+在更多的情况下,研发人员开发的Pod应用需要通过API Server查询、创建及管理其他相关资源对象,因此这类用户才是Kubernetes的关键用户.为此，Kubernetes设计了Service Account这个特殊的资源对象.
 
+- Service Account:表示Pod应用的账号,为Pod提供必要的身份认证.在此基础上,Kubernetes进一步实现和完善了基于角色的访问控制权限系统:RBAC(Role-Based Access Control)
 
+在默认情况下,Kubernetes在每个命名空间中都会创建一个默认的名称为`default`的Service Account.因此Service Account是不能全局使用的,只能被它所在命名空间中的Pod使用.
 
+查看集群中所有的Service Account:
 
+```
+soap@k8s-master:~$ kubectl get sa --all-namespaces
+NAMESPACE         NAME                                 SECRETS   AGE
+default           default                              1         4d5h
+development       default                              1         2d6h
+kube-node-lease   default                              1         4d5h
+kube-public       default                              1         4d5h
+kube-system       attachdetach-controller              1         4d5h
+kube-system       bootstrap-signer                     1         4d5h
+kube-system       certificate-controller               1         4d5h
+kube-system       clusterrole-aggregation-controller   1         4d5h
+kube-system       coredns                              1         4d5h
+kube-system       cronjob-controller                   1         4d5h
+kube-system       daemon-set-controller                1         4d5h
+kube-system       default                              1         4d5h
+kube-system       deployment-controller                1         4d5h
+kube-system       disruption-controller                1         4d5h
+kube-system       endpoint-controller                  1         4d5h
+kube-system       endpointslice-controller             1         4d5h
+kube-system       endpointslicemirroring-controller    1         4d5h
+kube-system       ephemeral-volume-controller          1         4d5h
+kube-system       expand-controller                    1         4d5h
+kube-system       flannel                              1         4d
+kube-system       generic-garbage-collector            1         4d5h
+kube-system       horizontal-pod-autoscaler            1         4d5h
+kube-system       job-controller                       1         4d5h
+kube-system       kube-proxy                           1         4d5h
+kube-system       namespace-controller                 1         4d5h
+kube-system       node-controller                      1         4d5h
+kube-system       persistent-volume-binder             1         4d5h
+kube-system       pod-garbage-collector                1         4d5h
+kube-system       pv-protection-controller             1         4d5h
+kube-system       pvc-protection-controller            1         4d5h
+kube-system       replicaset-controller                1         4d5h
+kube-system       replication-controller               1         4d5h
+kube-system       resourcequota-controller             1         4d5h
+kube-system       root-ca-cert-publisher               1         4d5h
+kube-system       service-account-controller           1         4d5h
+kube-system       service-controller                   1         4d5h
+kube-system       statefulset-controller               1         4d5h
+kube-system       token-cleaner                        1         4d5h
+kube-system       ttl-after-finished-controller        1         4d5h
+kube-system       ttl-controller                       1         4d5h
+```
 
+Service Account是通过Secret来保存对应的用户(也就是应用)身份凭证的,这些凭证信息包括CA根证书数据(ca.crt)和签名后的Token信息(Token).在Token信息中就包括了对应的Service Account的名称,因此API Server通过接收到的Token信息就能确定Service Account的身份.在默认情况下,用户创建一个Pod时,Pod会绑定对应命名空间中的名为default的Service Account作为其"凭证".当Pod里的容器被创建时,Kubernetes会把对应的Secret对象中的身份信息(ca.crt、Token等)持久化保存到容器里固定位置的本地文件中,因此当容器里的用户进程通过Kubernetes提供的客户端API去访问API Server时,这些API会自动读取这些身份信息文件,并将其附加到HTTPS请求中传递给API Server,以便完成身份认证逻辑.在身份认证通过以后,就涉及"访问授权"的问题,这就是RBAC要解决的问题了.
 
+- Role:Role资源对象包括Role和ClusterRole这两种类型的角色.角色定义了一组特定权限的规则(比如可以操作某类资源对象).
 
+	- Role:局限于某个命名空间的角色由Role对象定义
+	- ClusterRole:作用于整个Kubernetes集群范围内的角色
+	
+	例:在名为default的命名空间中定义一个Role对象,用于授予对Pod资源的读权限,绑定到该Role的用户则具有对Pod资源的get、watch和list权限:
+	
+	```yaml
+	kind: Role
+	apiVersion: rbac.authorization.k8s.io/v1
+	metadata:
+	  namespace: default
+	  name: pod-reader
+	rules:
+	  # 空串表示使用core API Group
+	  - apiGroups: [""]
+	    resources: ["pods"]
+	    verbs: ["get", "watch", "list"]
+	```
 
+	接下来就是如何将Role与具体用户绑定(用户授权)的问题了.我们可以通过RoleBinding与ClusterRoleBinding来解决这个问题.下面是一个具体的例子:在命名空间default中将名为pod-reader的角色授予用户"Caden",结合对应的Role的定义,表明这一授权将允许用户"Caden"从命名空间default中读取pod
 
+	```yaml
+	kind: RoleBinding
+	apiVersion: rbac.authorization.k8s.io/v1
+	metadata:
+	  name: read-pods
+	  namespace: default
+	subjects:
+	  - kind: User
+	    name: Caden
+	    apiGroup: rbac.authorization.k8s.io
+	roleRef:
+	  kind: Role
+	  name: pod-reader
+	  apiGroup: rbac.authorization.k8s.io
+	```
+	
+	- `subjects`:表示要授权的对象
+	
+		- `subjects.kind`:可以授权3类目标账号:
+			
+			- Group:用户组
+			- User:某个具体用户
+			- Service Account:Pod应用所使用的账号
+	
+- NetworkPolicy:网络策略.在安全领域,除了以上针对API Server访问安全相关的资源对象,还有一种特殊的资源对象:NetworkPolicy.NetworkPolicy是网络安全相关的资源对象,用于解决用户应用之间的网络隔离和授权问题.NetworkPolicy是一种关于Pod间相互通信,以及Pod与其他网络端点间相互通信的安全规则设定.
 
-
-
-
+	NetworkPolicy资源使用标签选择Pod,并定义选定Pod所允许的通信规则.在默认情况下,Pod间及Pod与其他网络端点间的访问是没有限制的,这假设了Kubernetes集群被一个厂商(公司/租户)独占,集群 中部署的应用都是相互可信的,无须相互防范.但是,如果存在多个厂商共同使用一个Kubernetes集群的情况,则特别是在公有云环境中,不同厂商的应用要相互隔离以增加安全性,这就可以通过NetworkPolicy来实现了.
