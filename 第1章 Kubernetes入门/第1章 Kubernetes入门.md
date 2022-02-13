@@ -1587,27 +1587,27 @@ Job所控制的Pod副本是短暂运行的,可以将其视为一组容器,其中
 
 	- Kubernetes内置了基于Pod的CPU利用率进行自动扩缩容的机制,应用开发者也可以自定义度量指标(如每秒请求数)来实现自定义的HPA功能
 
-例:一个HPA定义的例子
-
-```yaml
-apiVersion: autoscaling/v1
-kind: HorizontalPodAutoscaler
-metadata:
-  name: php-apache
-  namespace: default
-spec:
-  maxReplicas: 10
-  minReplicas: 1
-  scaleTargetRef:
-    kind: Deployment
-    name: php-apache
-  targetCPUUtilizationPercentage: 90
-```
-
-- `spec.scaleTargetRef`:描述HPA控制的目标对象.本例中可以看到,HPA控制的目标对象是一个名为php-apache的Deployment中的Pod副本.
-- `spec.targetCPUUtilizationPercentage`:控制的Pod副本的CPU利用率阈值.超过该值将会触发自动动态扩容
-- `spec.maxReplicas`:限定Pod的副本最大数量
-- `spec.minReplicas`:限定Pod的副本最小数量
+	例:一个HPA定义的例子
+	
+	```yaml
+	apiVersion: autoscaling/v1
+	kind: HorizontalPodAutoscaler
+	metadata:
+	  name: php-apache
+	  namespace: default
+	spec:
+	  maxReplicas: 10
+	  minReplicas: 1
+	  scaleTargetRef:
+	    kind: Deployment
+	    name: php-apache
+	  targetCPUUtilizationPercentage: 90
+	```
+	
+	- `spec.scaleTargetRef`:描述HPA控制的目标对象.本例中可以看到,HPA控制的目标对象是一个名为php-apache的Deployment中的Pod副本.
+	- `spec.targetCPUUtilizationPercentage`:控制的Pod副本的CPU利用率阈值.超过该值将会触发自动动态扩容
+	- `spec.maxReplicas`:限定Pod的副本最大数量
+	- `spec.minReplicas`:限定Pod的副本最小数量
 
 - VPA:Vertical Pod Autoscaler.即垂直Pod自动扩缩容,它根据容器资源使用率自动推测并设置Pod合理的CPU和内存的需求指标,从而更加精确地调度Pod,实现整体上节省集群资源的目标,因为无须人为操作,因此也进一步提升了运维自动化的水平.VPA目前属于比较新的特性,也不能与HPA共同操控同一组目标Pod,它们未来应该会深入融合,建议关注其发展状况
 
