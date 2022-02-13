@@ -1929,4 +1929,4 @@ Service Account是通过Secret来保存对应的用户(也就是应用)身份凭
 	
 - NetworkPolicy:网络策略.在安全领域,除了以上针对API Server访问安全相关的资源对象,还有一种特殊的资源对象:NetworkPolicy.NetworkPolicy是网络安全相关的资源对象,用于解决用户应用之间的网络隔离和授权问题.NetworkPolicy是一种关于Pod间相互通信,以及Pod与其他网络端点间相互通信的安全规则设定.
 
-	NetworkPolicy资源使用标签选择Pod,并定义选定Pod所允许的通信规则.在默认情况下,Pod间及Pod与其他网络端点间的访问是没有限制的,这假设了Kubernetes集群被一个厂商(公司/租户)独占,集群 中部署的应用都是相互可信的,无须相互防范.但是,如果存在多个厂商共同使用一个Kubernetes集群的情况,则特别是在公有云环境中,不同厂商的应用要相互隔离以增加安全性,这就可以通过NetworkPolicy来实现了.
+	NetworkPolicy资源使用标签选择Pod,并定义选定Pod所允许的通信规则.在默认情况下,Pod间及Pod与其他网络端点间的访问是没有限制的,这假设了Kubernetes集群被一个厂商(公司/租户)独占,集群中部署的应用都是相互可信的,无须相互防范.但是,如果存在多个厂商共同使用一个Kubernetes集群的情况,则特别是在公有云环境中,不同厂商的应用要相互隔离以增加安全性,这就可以通过NetworkPolicy来实现了.
