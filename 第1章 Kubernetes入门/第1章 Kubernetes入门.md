@@ -1527,6 +1527,114 @@ StatefulSet的建模能力有限,面对复杂的有状态集群时显得力不�
 
 需要注意的是,Kubernetes Operator框架并不是面向普通用户的,而是面向Kubernetes平台开发者的.平台开发者借助Operator框架提供的API,可以更方便地开发一个类似StatefulSet的控制器.在这个控制器里,开发者通过编码方式实现对目标集群的自定义操控,包括集群部署、故障发现及集群调整等方面都可以实现有针对性的操控,从而 实现更好的自动部署和智能运维功能.从发展趋势来看,未来主流的有状态集群基本都会以Operator方式部署到Kubernetes集群中.
 
+#### 7. 批处理应用
+
+常见的应用除了无状态服务、有状态集群外,还有批处理应用.批处理应用的特点是一个或多个进程处理一组数据(图像、文件、视频等),在这组数据都处理完成后,批处理任务自动结束.为了支持这类应用,Kubernetes引入了新的资源对象:Job.下面是一个计算圆周率的经典例子:
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pi
+spec:
+  template:
+    spec:
+      containers:
+        - name: pi
+          image: perl
+          command: ["perl", "-Mbignum=bpi", "-wle", "print bpi(100)"]
+      restartPolicy: Never
+  parallelism: 1
+  completions: 5
+```
+
+Jobs控制器提供了2个控制并发数的参数:
+
+- `spec.completions`:表示需要运行任务数的总数
+- `spec.parallelism`:表示并发运行的个数
+
+	- 例如设置`spec.parallelism`为1,则会依次运行任务,在前面的任务运行后再运行后边的任务
+
+Job所控制的Pod副本是短暂运行的,可以将其视为一组容器,其中的每个容器都仅运行一次.当Job控制的所有Pod副本都运行结束时,对应的Job也就结束了.Job在实现方式上与Deployment等副本控制器不同,Job生成的Pod副本是不能自动重启的,对应Pod副本的`restartPolicy`都被设置为`Never`.因此,当对应的Pod副本都执行完成时,相应的Job也就完成了控制使命.后来,Kubernetes增加了CronJob,可以周期性地执行某个任务.
+
+#### 8. 应用的配置问题
+
+通过前面的学习,初步理解了三种应用建模的资源对象,总结如下:
+
+- 无状态服务的建模:Deployment
+- 有状态集群的建模:StatefulSet
+- 批处理应用的建模:Job
+
+在进行应用建模时,应该如何解决应用需要在不同的环境中修改配置的问题呢?这就涉及ConfigMap和Secret两个对象.
+
+- ConfigMap:保存配置项(`key=value`)的一个Map.和编程语言中的Map不同,ConfigMap是分布式系统中"配置中心"的独特实现之一.几乎所有应用都需要一个静态的配置文件来提供启动参数,当这个应用是一个分布式应用,有多个副本部署在不同的机器上时,配置文件的分发就成为一个让人头疼的问题,所以很多分布式系统都有一个配置中心组件,来解决这个问题.但配置中心通常会引入新的API,从而导致应用的耦合和侵入(比如应用需要在代码中编写调用配置中心的拉取配置的API,导致配置中心侵入了应用,且二者有了耦合).Kubernetes则采用了一种简单的方案来规避这个问题,如下图示
+
+![ConfigMap配置集中化的一种简单方案](./img/ConfigMap配置集中化的一种简单方案.png)
+
+具体做法:
+
+- 用户将配置文件的内容保存到ConfigMap中,key为配置文件的文件名,value为配置文件的内容,多个配置文件都可被放入同一个ConfigMap
+- 在建模用户应用时,在Pod里将ConfigMap定义为特殊的Volume进行挂载.在Pod被调度到某个具体Node上时,ConfigMap里的配置文件会被自动还原到本地目录下,然后映射到Pod里指定的配置目录下,这样用户的程序就可以无感知地读取配置了
+- 在ConfigMap的内容发生修改后,Kubernetes会自动重新获取 ConfigMap的内容,并在目标节点上更新对应的文件
+
+- Secret:Secret也用于解决应用配置的问题,不过它解决的是对敏感信息的配置问题(比如数据库的用户名和密码、应用的数字证书、Token、SSH密钥及其他需要保密的敏感配置).对于这类敏感信息,我们可以创建一个Secret对象,然后被Pod引用.Secret中的数据要求以BASE64编码格式存放.注意,BASE64编码并不是加密的.在Kubernetes 1.7版本以后,Secret中的数据才可以以加密的形式进行保存,更加安全
+
+#### 9. 应用的运维问题
+
+与应用的自动运维相关的几个重要对象:
+
+- HPA:Horizontal Pod Autoscaler(个人翻译:Pod的水平自动伸缩),如果我们用Deployment来控制Pod的副本数量,则可以通过手工运行`kubectl scale`命令来实现Pod扩容或缩容.如果仅仅到此为止,则显然不符合谷歌对Kubernetes的定位目标:自动化、智能化.在谷歌看来，分布式系统要能够根据当前负载的变化自动触发水平扩容或缩容,因为这一过程可能是频繁发生、不可预料的,所以采用手动控制的方式是不现实的,因此就有了后来的HPA这个高级功能.可以将HPA理解为Pod横向自动扩容,即自动控制Pod数量的增加或减少.通过追踪分析指定Deployment控制的所有目标Pod的负载变化情况,来确定是否需要有针对性地调整目标Pod的副本数量,这是HPA的实现原理.
+
+	- Kubernetes内置了基于Pod的CPU利用率进行自动扩缩容的机制,应用开发者也可以自定义度量指标(如每秒请求数)来实现自定义的HPA功能
+
+例:一个HPA定义的例子
+
+```yaml
+apiVersion: autoscaling/v1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: php-apache
+  namespace: default
+spec:
+  maxReplicas: 10
+  minReplicas: 1
+  scaleTargetRef:
+    kind: Deployment
+    name: php-apache
+  targetCPUUtilizationPercentage: 90
+```
+
+- `spec.scaleTargetRef`:描述HPA控制的目标对象.本例中可以看到,HPA控制的目标对象是一个名为php-apache的Deployment中的Pod副本.
+- `spec.targetCPUUtilizationPercentage`:控制的Pod副本的CPU利用率阈值.超过该值将会触发自动动态扩容
+- `spec.maxReplicas`:限定Pod的副本最大数量
+- `spec.minReplicas`:限定Pod的副本最小数量
+
+- VPA:Vertical Pod Autoscaler.即垂直Pod自动扩缩容,它根据容器资源使用率自动推测并设置Pod合理的CPU和内存的需求指标,从而更加精确地调度Pod,实现整体上节省集群资源的目标,因为无须人为操作,因此也进一步提升了运维自动化的水平.VPA目前属于比较新的特性,也不能与HPA共同操控同一组目标Pod,它们未来应该会深入融合,建议关注其发展状况
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
