@@ -1611,20 +1611,205 @@ Job所控制的Pod副本是短暂运行的,可以将其视为一组容器,其中
 
 - VPA:Vertical Pod Autoscaler.即垂直Pod自动扩缩容,它根据容器资源使用率自动推测并设置Pod合理的CPU和内存的需求指标,从而更加精确地调度Pod,实现整体上节省集群资源的目标,因为无须人为操作,因此也进一步提升了运维自动化的水平.VPA目前属于比较新的特性,也不能与HPA共同操控同一组目标Pod,它们未来应该会深入融合,建议关注其发展状况
 
+### 1.4.4 存储类
 
+存储类资源对象主要包括:
 
+- Volume
+- Persisitent Volume
+- PVC
+- StorageClass
 
+- Volume:Volume是Pod中能够被多个容器访问的共享目录.Kubernetes中的Volume概念、用途和目的与Docker中的Volume比较类似,但二者不能等价
 
+	- Kubernetes中的Volume被定义在Pod上,被一个Pod里的多个容器挂载到具体的文件目录下
+	- Kubernetes中的Volume与Pod的生命周期相同,但与容器的生命周期无关.当容器终止或者重启时,Volume中的数据也不会丢失
+	- Kubernetes支持多种类型的Volume.例如GlusterFS、Ceph等分布式文件系统
 
+Volume的使用也比较简单.在大多数情况下,先在Pod上声明一个Volume,然后在容器里引用该Volume并将其挂载(Mount)到容器里的某个目录下即可.
 
+例:给之前的Tomcat Pod增加一个名为datavol的Volume,并将该Volume挂载到容器的`/mydata-data`目录下:
 
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tomcat-deploy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      tier: frontend
+    matchExpressions:
+      - {key: tier, operator: In, values: [frontend]}
+  template:
+    metadata:
+      labels:
+        app: app-demo
+        tier: frontend
+    spec:
+      volumes:
+        - name: datavol
+          emptyDir: {}
+      containers:
+        - name: tomcat-demo
+          image: tomcat
+          volumeMounts:
+            - mountPath: /mydata-data
+              name: datavol
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+```
 
+Kubernetes提供了非常丰富的Volume类型供容器使用,例如临时目录、宿主机目录、共享存储等.下面对其中一些常见的类型进行说明.
 
+#### 1. emptyDir
 
+一个emptyDir是在Pod分配到Node时创建的.从它的名称就可以看出,它的初始内容为空,并且无须指定宿主机上对应的目录文件,因为这是Kubernetes自动分配的一个目录,当Pod从Node上移除时,emptyDir中的数据也被永久移除.emptyDir的一些用途如下:
 
+- 临时空间.例如用于某些应用程序运行时所需的临时目录,且无须永久保留
+- 长时间任务执行过程中使用的临时目录
+- 一个容器需要从另一个容器中获取数据的目录(多容器共享目录)
 
+在默认情况下,emptyDir使用的是节点的存储介质,例如磁盘或者网络存储.还可以使用`emptyDir.medium`属性,把这个属性设置为`Memory`,就可以使用更快的基于内存的后端存储了.需要注意的是,这种情况下的emptyDir使用的内存会被计入容器的内存消耗,将受到资源限制和配额机制的管理.
 
+#### 2. hostPath
 
+- hostPath:在Pod上挂载宿主机上的文件或目录,通常可以用于以 下几方面
+
+	- 在容器应用程序生成的日志文件需要永久保存时,可以使用宿主机的高速文件系统对其进行存储
+	- 需要访问宿主机上Docker引擎内部数据结构的容器应用时,可以通过定义hostPath为宿主机`/var/lib/docker`目录,使容器内部的应用可以直接访问Docker的文件系统
+
+在使用hostPath类型的Volume时,需要注意以下几点:
+
+- 在不同的Node上具有相同配置的Pod,可能会因为宿主机上的目录和文件不同,而导致对Volume上目录和文件的访问结果不一致
+- 如果使用了资源配额管理,则Kubernetes无法将hostPath在宿主机上使用的资源纳入管理
+
+在下面的例子中使用了宿主机的`/data`目录定义了一个hostPath类型的Volume:
+
+````yaml
+volumes:
+  - name: "persistent-storage"
+    hostPath:
+      path: "/data"
+````
+
+#### 3. 公有云Volume
+
+公有云提供的Volume类型包括谷歌公有云提供的GCEPersistentDisk、亚马逊公有云提供的AWS Elastic Block Store(EBS Volume)等.当Kubernetes集群运行在公有云上或者使用公有云厂家提供的Kubernetes集群时,就可以使用这类Volume.
+
+#### 4. 其他类型的Volume
+
+- iscsi:将iSCSI存储设备上的目录挂载到Pod中
+- nfs:将NFS Server上的目录挂载到Pod中
+- glusterfs:将开源GlusterFS网络文件系统的目录挂载到Pod中
+- rbd:将Ceph块设备共享存储(Rados Block Device)挂载到Pod中
+- gitRepo:通过挂载一个空目录,并从Git库克隆(clone)一个git repository以供Pod使用
+- configmap:将配置数据挂载为容器内的文件
+- secret:将Secret数据挂载为容器内的文件
+
+##### 动态存储管理
+
+Volume属于静态管理的存储,即我们需要事先定义每个Volume,然后将其挂载到Pod中去用.这种方式存在很多弊端,典型的弊端如下:
+
+- 配置参数烦琐,存在大量手工操作,违背了Kubernetes自动化的追求目标
+- 预定义的静态Volume可能不符合目标应用的需求,比如容量问题、性能问题
+
+所以Kubernetes后面就发展了存储动态化的新机制,来实现存储的自动化管理.相关的核心对象(概念)有三个:
+
+- Persistent Volume(PV)
+- StorageClass
+- PVC(PV Claim)
+
+- PV:PV表示由系统动态创建(dynamically provisioned)的一个存储卷,可以被理解成Kubernetes集群中某个网络存储对应的一块存储.它与Volume类似,但PV并不是被定义在Pod上的,而是独立于Pod之外定义的.
+- PV目前支持的类型主要有gcePersistentDisk、AWSElasticBlockStore、AzureFile、AzureDisk、FC(Fibre Channel)、NFS、iSCSI、RBD(Rados Block Device)、CephFS、Cinder、GlusterFS、VsphereVolume、Quobyte Volumes、VMware Photon、Portworx Volumes、ScaleIO Volumes、HostPath、Local等
+
+Kubernetes支持的存储系统有多种,那么系统怎么知道从哪个存储系统中创建什么规格的PV存储卷呢?这就涉及StorageClass与PVC.
+
+- StorageClass:用于描述和定义某种存储系统的特征
+
+	例:
+	
+	```yaml
+	apiVersion: storage.k8s.io/v1
+	kind: StorageClass
+	metadata:
+	  name: standard
+	provisioner: kubernetes.io/aws-ebs
+	parameters:
+	  type: gp2
+	reclaimPolicy: Retain
+	allowVolumeExpansion: true
+	mountOptions:
+	  - debug
+	volumeBindingMode: Immediate
+	```
+	
+	- `provisioner`:表示创建PV的第三方存储插件
+	- `parameters`:创建PV时的必要参数
+	- `reclaimPolicy`:表明回收策略.回收策略包括删除或保留
+
+StorageClass的名称会在PVC(PV Claim)中出现.
+
+- PVC:表示应用希望申请的PV规格
+
+	以下是一个PVC的定义:
+	
+	```yaml
+	apiVersion: v1
+	kind: PersistentVolumeClaim
+	metadata:
+	  name: claim1
+	spec:
+	  accessModes:
+	    - ReadWriteOnce
+	  storageClassName: standard
+	  resources:
+	    requests:
+	      storage: 30Gi
+	```
+
+	- `spec.accessModes`:表明存储访问模式
+	- `spec.storageClassName`:指定实现动态创建的StorageClass名称
+	- `spec.resources`:存储的具体规格
+
+有了以StorageClass与PVC为基础的动态PV管理机制,就很容易管理和使用Volume了.只要在Pod里引用PVC即可达到目的.如下面的例子所示:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tomcat-deploy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      tier: frontend
+    matchExpressions:
+      - {key: tier, operator: In, values: [frontend]}
+  template:
+    metadata:
+      labels:
+        app: app-demo
+        tier: frontend
+    spec:
+      volumes:
+        - name: tomcatdata
+          persistentVolumeClaim:
+            claimName: claim1
+      containers:
+        - name: tomcat-demo
+          image: tomcat
+          volumeMounts:
+            - mountPath: /mydata-data
+              name: datavol
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+```
+
+除了动态创建PV,PV动态扩容、快照及克隆的能力也是Kubernetes社区正在积极研发的高级特性.
 
 
 
