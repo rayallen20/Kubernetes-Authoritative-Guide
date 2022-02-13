@@ -1491,10 +1491,41 @@ spec:
 
 通过这个例子可以看出,Ingress其实只能将多个HTTP(HTTPS)的Service"聚合",通过虚拟域名或者URL Path的特征进行路由转发的功能.考虑到常见的微服务都采用了HTTP REST协议,所以Ingress这种聚合多个Service并将其暴露到外网的做法还是很有效的.
 
+#### 6. 有状态的应用集群
 
+Deployment对象是用来实现无状态服务的多副本自动控制功能的,那么有状态的服务(比如ZooKeeper集群、MySQL高可用集群(3节点集群)、Kafka集群等)是怎么实现自动部署和管理的?这个问题就复杂多了,这些一开始是依赖StatefulSet解决的.但后来发现对于一些复杂的有状态的集群应用来说,StatefulSet还是不够通用和强大,所以后面又出现了Kubernetes Operator.
 
+StatefulSet:StatefulSet之前曾用过PetSet这个名称,在IT世界里,有状态的应用被类比为宠物(Pet),无状态的应用则被类比为牛羊(我更愿意称它们为牛马,和我一样),每个宠物在主人那里都是"唯一的存在",宠物生病了,是要花很多钱去治疗的,需要用心照料,而无差别的牛羊则没有这个待遇.总结下来,在有状态集群中一般有如下特殊共性:
 
+- 每个节点都有固定的身份ID,通过这个ID,集群中的成员可以相互发现并通信
+- 集群的规模是比较固定的,集群规模不能随意变动
+- 集群中的每个节点都是有状态的,通常会持久化数据到永久存储中,每个节点在重启后都需要使用原有的持久化数据
+- 集群中成员节点的启动顺序(以及关闭顺序)通常也是确定的
+- 如果磁盘损坏,则集群里的某个节点无法正常运行,集群功能受损
 
+如果通过Deployment控制Pod副本数量来实现以上有状态的集群,就会发现上述很多特性大部分难以满足:
+
+比如:Deployment创建的Pod因为Pod的名称是随机产生的,事先无法为每个Pod都确定唯一不变的ID,不同Pod的启动顺序也无法保证,所以在集群中的某个成员节点宕机后,不能在其他节点上随意启动一个新的Pod实例
+
+另外,为了能够在其他节点上恢复某个失败的节点,这种集群中的Pod需要挂接某种共享存储,为了解决有状态集群这种复杂的特殊应用的建模,Kubernetes引入了专门的资源对象:StatefulSet.StatefulSet从本质上来说,可被看作Deployment/RC的一个特殊变种,它有如下特性:
+
+- StatefulSet里的每个Pod都有稳定、唯一的网络标识,可以用来发现集群内的其他成员.假设StatefulSet的名称为kafka,那么第1个Pod叫kafka-0,第2个叫kafka-1,以此类推
+- StatefulSet控制的Pod副本的启停顺序是受控的.操作第n个Pod时,前n - 1个Pod已经是运行且准备好的状态
+- StatefulSet里的Pod采用稳定的持久化存储卷,通过PV或PVC来实现,删除Pod时默认不会删除与StatefulSet相关的存储卷(为了保证数据安全)
+
+StatefulSet除了要与PV卷捆绑使用以存储Pod的状态数据,还要与Headless Service配合使用.即在每个StatefulSet定义中都要声明该StatefulSet属于哪个Headless Service.StatefulSet在Headless Service的基础上又为StatefulSet控制的每个Pod实例都创建了一个DNS域名,这个域名的格式为:`$(podname).$(headless service name)`.
+
+比如一个3节点的Kafka的StatefulSet集群对应的Headless Service的名称为`kafka-headless-service`,StatefulSet的名称为`kafka-statefulset`,则StatefulSet里3个Pod的DNS名称分别为:
+
+- kafka-statefulset-0.kafka-headless-service
+- kafka-statefulset-1.kafka-headless-service
+- kafka-statefulset-2.kafka-headless-service
+
+这些DNS名称可以直接在集群的配置文件中固定下来.
+
+StatefulSet的建模能力有限,面对复杂的有状态集群时显得力不从心,所以就有了后来的Kubernetes Operator框架和众多Operator实现.
+
+需要注意的是,Kubernetes Operator框架并不是面向普通用户的,而是面向Kubernetes平台开发者的.平台开发者借助Operator框架提供的API,可以更方便地开发一个类似StatefulSet的控制器.在这个控制器里,开发者通过编码方式实现对目标集群的自定义操控,包括集群部署、故障发现及集群调整等方面都可以实现有针对性的操控,从而 实现更好的自动部署和智能运维功能.从发展趋势来看,未来主流的有状态集群基本都会以Operator方式部署到Kubernetes集群中.
 
 
 
